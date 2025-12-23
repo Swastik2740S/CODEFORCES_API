@@ -1,0 +1,290 @@
+generator client {
+  provider   = "prisma-client-js"
+  engineType = "node-api"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+
+// Core User Model
+model User {
+  id            String   @id @default(cuid())
+  email         String?  @unique
+  passwordHash  String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  codeforcesHandles CodeforcesHandle[]
+  preferences       UserPreferences?
+}
+
+
+// Codeforces Handle (supports multiple handles per user)
+model CodeforcesHandle {
+  id                String   @id @default(cuid())
+  handle            String   @unique
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Basic CF data
+  rating            Int?
+  maxRating         Int?
+  rank              String?
+  maxRank           String?
+  contribution      Int?
+  lastOnlineTime    DateTime?
+  registrationTime  DateTime?
+  friendOfCount     Int?
+  avatar            String?
+  titlePhoto        String?
+  
+  // Cached data
+  lastSyncedAt      DateTime @default(now())
+  
+  // Relations
+  submissions       Submission[]
+  contestParticipations ContestParticipation[]
+  ratings           RatingChange[]
+  
+  @@index([userId])
+  @@index([handle])
+}
+
+// User Preferences
+model UserPreferences {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  theme         String   @default("dark") // dark, light
+  defaultView   String   @default("6months") // 6months, 1year, alltime
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// Problems from Codeforces
+model Problem {
+  id                String   @id @default(cuid())
+  
+  // CF identifiers
+  contestId         Int?
+  problemsetName    String?
+  index             String
+  name              String
+  type              String?  // PROGRAMMING, QUESTION
+  
+  // Problem metadata
+  rating            Int?
+  tags              String[] // Array of tags like "dp", "graphs", etc.
+  
+  // Stats
+  solvedCount       Int?
+  
+  // Caching
+  lastSyncedAt      DateTime @default(now())
+  
+  // Relations
+  submissions       Submission[]
+  contestProblems   ContestProblem[]
+  
+  @@unique([contestId, index])
+  @@index([rating])
+  @@index([tags])
+}
+
+// Contests from Codeforces
+model Contest {
+  id                    String   @id @default(cuid())
+  
+  // CF identifiers
+  contestId             Int      @unique
+  name                  String
+  type                  String?  // CF, IOI, ICPC
+  phase                 String?  // BEFORE, CODING, PENDING_SYSTEM_TEST, SYSTEM_TEST, FINISHED
+  
+  // Contest timing
+  durationSeconds       Int?
+  startTime             DateTime?
+  relativeTimeSeconds   Int?
+  
+  // Contest metadata
+  preparedBy            String?
+  websiteUrl            String?
+  description           String?
+  difficulty            Int?
+  kind                  String?
+  icpcRegion            String?
+  country               String?
+  city                  String?
+  season                String?
+  
+  // Caching
+  lastSyncedAt          DateTime @default(now())
+  
+  // Relations
+  participations        ContestParticipation[]
+  problems              ContestProblem[]
+  
+  @@index([contestId])
+  @@index([startTime])
+}
+
+// Junction table for Contest and Problems
+model ContestProblem {
+  id          String   @id @default(cuid())
+  contestId   String
+  contest     Contest  @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  problemId   String
+  problem     Problem  @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  
+  index       String   // A, B, C, etc.
+  points      Float?
+  
+  @@unique([contestId, problemId])
+  @@index([contestId])
+}
+
+// User participation in contests
+model ContestParticipation {
+  id                    String   @id @default(cuid())
+  
+  handleId              String
+  handle                CodeforcesHandle @relation(fields: [handleId], references: [id], onDelete: Cascade)
+  
+  contestId             String
+  contest               Contest  @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  
+  // Participation details
+  rank                  Int?
+  oldRating             Int?
+  newRating             Int?
+  ratingChange          Int?
+  
+  // Performance
+  problemsSolved        Int      @default(0)
+  totalProblems         Int      @default(0)
+  penalty               Int?
+  
+  // Timestamps
+  participatedAt        DateTime @default(now())
+  
+  @@unique([handleId, contestId])
+  @@index([handleId])
+  @@index([contestId])
+}
+
+// Submissions by users
+model Submission {
+  id                    String   @id @default(cuid())
+  
+  // CF identifiers
+  submissionId          Int      @unique
+  
+  handleId              String
+  handle                CodeforcesHandle @relation(fields: [handleId], references: [id], onDelete: Cascade)
+  
+  problemId             String
+  problem               Problem  @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  
+  // Submission details
+  contestId             Int?
+  creationTime          DateTime
+  relativeTimeSeconds   Int?
+  
+  // Programming language and verdict
+  programmingLanguage   String?
+  verdict               String?  // OK, WRONG_ANSWER, TIME_LIMIT_EXCEEDED, etc.
+  testset               String?  // SAMPLES, PRETESTS, TESTS, CHALLENGES, etc.
+  passedTestCount       Int?
+  timeConsumedMillis    Int?
+  memoryConsumedBytes   BigInt?
+  
+  // Additional metadata
+  points                Float?
+  
+  // Caching
+  lastSyncedAt          DateTime @default(now())
+  
+  @@index([handleId])
+  @@index([problemId])
+  @@index([verdict])
+  @@index([creationTime])
+}
+
+// Rating changes over time
+model RatingChange {
+  id                    String   @id @default(cuid())
+  
+  handleId              String
+  handle                CodeforcesHandle @relation(fields: [handleId], references: [id], onDelete: Cascade)
+  
+  // Contest info
+  contestId             Int
+  contestName           String
+  
+  // Rating change
+  oldRating             Int
+  newRating             Int
+  ratingChange          Int
+  
+  // Rankings
+  rank                  Int
+  ratingUpdateTime      DateTime
+  
+  @@index([handleId])
+  @@index([contestId])
+  @@index([ratingUpdateTime])
+}
+
+// Activity tracking for the activity heatmap
+model Activity {
+  id                String   @id @default(cuid())
+  
+  handleId          String
+  date              DateTime @db.Date
+  problemsSolved    Int      @default(0)
+  submissionCount   Int      @default(0)
+  contestsAttended  Int      @default(0)
+  
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  @@unique([handleId, date])
+  @@index([handleId])
+  @@index([date])
+}
+
+// Sync jobs to track API call history (respects rate limits)
+model SyncJob {
+  id                String   @id @default(cuid())
+  
+  jobType           String   // user, problems, contests, submissions, ratings
+  handleId          String?
+  
+  status            String   // pending, running, completed, failed
+  startedAt         DateTime @default(now())
+  completedAt       DateTime?
+  
+  errorMessage      String?
+  recordsProcessed  Int?
+  
+  @@index([jobType])
+  @@index([status])
+  @@index([startedAt])
+}
+
+// Rate limit tracking
+model RateLimitTracker {
+  id            String   @id @default(cuid())
+  endpoint      String   // user.info, user.status, problemset.problems, etc.
+  requestCount  Int      @default(0)
+  windowStart   DateTime
+  
+  @@unique([endpoint, windowStart])
+  @@index([endpoint])
+  @@index([windowStart])
+}
