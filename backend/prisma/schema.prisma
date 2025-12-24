@@ -40,6 +40,8 @@ model CodeforcesHandle {
   friendOfCount     Int?
   avatar            String?
   titlePhoto        String?
+
+  isActive           Boolean  @default(true)
   
   // Cached data
   lastSyncedAt      DateTime @default(now())
