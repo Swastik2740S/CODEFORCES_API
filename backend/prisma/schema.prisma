@@ -50,6 +50,7 @@ model CodeforcesHandle {
   submissions       Submission[]
   contestParticipations ContestParticipation[]
   ratings           RatingChange[]
+  syncJobs          SyncJob[]
   
   @@index([userId])
   @@index([handle])
@@ -236,7 +237,8 @@ model RatingChange {
   // Rankings
   rank                  Int
   ratingUpdateTime      DateTime
-  
+
+  @@unique([handleId, contestId])
   @@index([handleId])
   @@index([contestId])
   @@index([ratingUpdateTime])
@@ -262,22 +264,27 @@ model Activity {
 
 // Sync jobs to track API call history (respects rate limits)
 model SyncJob {
-  id                String   @id @default(cuid())
-  
-  jobType           String   // user, problems, contests, submissions, ratings
-  handleId          String?
-  
-  status            String   // pending, running, completed, failed
-  startedAt         DateTime @default(now())
-  completedAt       DateTime?
-  
-  errorMessage      String?
-  recordsProcessed  Int?
-  
+  id               String   @id @default(cuid())
+
+  jobType          String   // codeforces_sync, submissions_sync, etc.
+  status           String   // pending, running, completed, failed
+
+  startedAt        DateTime @default(now())
+  completedAt      DateTime?
+
+  errorMessage     String?
+  recordsProcessed Int?
+
+  // 🔑 RELATION (THIS FIXES YOUR ERROR)
+  handleId         String?
+  handle           CodeforcesHandle? @relation(fields: [handleId], references: [id], onDelete: Cascade)
+
   @@index([jobType])
   @@index([status])
   @@index([startedAt])
+  @@index([handleId])
 }
+
 
 // Rate limit tracking
 model RateLimitTracker {

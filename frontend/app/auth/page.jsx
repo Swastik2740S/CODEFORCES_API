@@ -43,7 +43,7 @@ export default function AuthPage() {
       const res = await fetch(`${API_BASE}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include", // 🍪 REQUIRED for cookies
+        credentials: "include",
         body: JSON.stringify(formData),
       });
 
@@ -52,14 +52,29 @@ export default function AuthPage() {
         throw new Error(data.error || "Authentication failed");
       }
 
-      // ✅ Next.js client navigation
-      router.push("/dashboard");
+      // 🔍 BACKEND-DRIVEN ROUTING
+      const bootstrapRes = await fetch(`${API_BASE}/user/bootstrap`, {
+        credentials: "include",
+      });
+
+      if (!bootstrapRes.ok) {
+        throw new Error("Failed to load user state");
+      }
+
+      const bootstrap = await bootstrapRes.json();
+
+      if (bootstrap.connected) {
+        router.push("/dashboard");
+      } else {
+        router.push("/connect-codeforces");
+      }
     } catch (err) {
       setError(err.message);
     } finally {
       setIsLoading(false);
     }
   }
+
 
 
   return (
@@ -88,8 +103,8 @@ export default function AuthPage() {
               key={tab}
               onClick={() => handleTabSwitch(tab)}
               className={`flex-1 py-1.5 text-sm rounded-md transition-all ${activeTab === tab
-                  ? "bg-[#262626] text-white shadow"
-                  : "text-gray-500 hover:text-gray-300"
+                ? "bg-[#262626] text-white shadow"
+                : "text-gray-500 hover:text-gray-300"
                 }`}
             >
               {tab === "signin" ? "Sign In" : "Create Account"}
@@ -163,14 +178,8 @@ export default function AuthPage() {
           </button>
         </form>
 
-        {/* Divider */}
-        <div className="my-6 text-center text-xs text-gray-500">OR</div>
 
-        {/* OAuth */}
-        <button className="w-full bg-[#262626] hover:bg-[#313131] border border-[#333] py-2.5 rounded-lg flex justify-center items-center gap-2">
-          <BarChart3 size={16} />
-          Continue with Codeforces
-        </button>
+        
       </div>
     </div>
   );
