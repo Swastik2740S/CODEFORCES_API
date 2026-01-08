@@ -2,31 +2,43 @@ import { LayoutGrid, Trophy, BarChart3, Users, Settings } from "lucide-react";
 
 export default function Sidebar() {
   return (
-    <aside className="w-64 bg-[#0f0f10] border-r border-white/5 h-screen px-4 py-6 flex flex-col">
-      {/* Logo */}
-      <div className="flex items-center gap-2 mb-10">
-        <div className="h-8 w-8 rounded-lg bg-orange-500 flex items-center justify-center">
-          <span className="text-black font-bold">‹›</span>
+    <aside className="w-64 bg-[#09090b] border-r border-zinc-900 h-screen flex flex-col justify-between py-8 px-6">
+      <div>
+        {/* Logo Section */}
+        <div className="flex items-center gap-3 mb-12 px-2">
+          <div className="h-8 w-8 rounded-full bg-white flex items-center justify-center shadow-[0_0_15px_rgba(255,255,255,0.2)]">
+            <span className="text-[#09090b] font-bold font-mono text-sm">‹/›</span>
+          </div>
+          <span className="text-xl font-serif font-bold text-white tracking-tight">
+            Tracker.
+          </span>
         </div>
-        <span className="text-white font-semibold">Tracker.</span>
+
+        {/* Navigation */}
+        <nav className="space-y-2">
+          <NavItem icon={LayoutGrid} label="Dashboard" active />
+          <NavItem icon={BarChart3} label="Problems" />
+          <NavItem icon={Trophy} label="Contests" />
+          <NavItem icon={Users} label="Peers" />
+        </nav>
       </div>
 
-      {/* Nav */}
-      <nav className="space-y-1 text-sm">
-        <NavItem icon={LayoutGrid} label="Dashboard" active />
-        <NavItem icon={BarChart3} label="Problems" />
-        <NavItem icon={Trophy} label="Contests" />
-        <NavItem icon={Users} label="Peers" />
-      </nav>
+      {/* Bottom Section */}
+      <div className="space-y-6">
+        <nav>
+           <NavItem icon={Settings} label="Settings" />
+        </nav>
 
-      {/* Bottom */}
-      <div className="mt-auto">
-        <NavItem icon={Settings} label="Settings" />
-        <div className="mt-6 flex items-center gap-3">
-          <div className="h-9 w-9 rounded-full bg-white/10" />
-          <div>
-            <p className="text-sm text-white">tourist_fan</p>
-            <p className="text-xs text-orange-400">Specialist</p>
+        {/* User Profile "Card" */}
+        <div className="flex items-center gap-3 pt-6 border-t border-zinc-900">
+          <div className="h-10 w-10 rounded-full bg-gradient-to-br from-zinc-700 to-zinc-900 border border-zinc-700 flex items-center justify-center text-xs text-white font-serif italic">
+             tf
+          </div>
+          <div className="flex flex-col">
+            <p className="text-sm font-medium text-zinc-200">tourist_fan</p>
+            <p className="text-[11px] font-medium text-emerald-500 uppercase tracking-wider">
+              Specialist
+            </p>
           </div>
         </div>
       </div>
@@ -37,15 +49,23 @@ export default function Sidebar() {
 function NavItem({ icon: Icon, label, active }) {
   return (
     <div
-      className={`flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition
+      className={`group flex items-center gap-3 px-4 py-3 rounded-xl cursor-pointer transition-all duration-300
         ${
           active
-            ? "bg-white/5 text-white"
-            : "text-white/60 hover:text-white hover:bg-white/5"
+            ? "bg-[#18181b] text-white"
+            : "text-zinc-500 hover:text-zinc-200 hover:bg-[#18181b]/50"
         }`}
     >
-      <Icon size={16} />
-      {label}
+      <Icon 
+        size={18} 
+        className={`transition-colors duration-300 ${active ? "text-white" : "text-zinc-600 group-hover:text-zinc-300"}`} 
+      />
+      <span className="text-sm font-medium">{label}</span>
+      
+      {/* Active Indicator Dot (Optional detail) */}
+      {active && (
+        <div className="ml-auto w-1.5 h-1.5 rounded-full bg-white shadow-[0_0_8px_white]" />
+      )}
     </div>
   );
 }
