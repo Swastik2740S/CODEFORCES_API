@@ -46,9 +46,7 @@ async function processJob(job) {
           newRating: r.newRating,
           ratingChange: r.newRating - r.oldRating,
           rank: r.rank,
-          ratingUpdateTime: new Date(
-            r.ratingUpdateTimeSeconds * 1000
-          ),
+          ratingUpdateTime: new Date(r.ratingUpdateTimeSeconds * 1000),
         },
       });
     }
@@ -61,9 +59,39 @@ async function processJob(job) {
       where: { id: job.id },
       data: { recordsProcessed: count },
     });
+
+    // ✅ Auto-enqueue activity sync after submissions are done
+    // Check no activity job is already pending/running for this handle
+    const existingActivityJob = await prisma.syncJob.findFirst({
+      where: {
+        handleId: handle.id,
+        jobType: "activity",
+        status: { in: ["pending", "running"] },
+      },
+    });
+
+    if (!existingActivityJob) {
+      await prisma.syncJob.create({
+        data: {
+          jobType: "activity",
+          status: "pending",
+          handleId: handle.id,
+        },
+      });
+      console.log(`📌 Activity sync job auto-queued for handle ${handle.handle}`);
+    }
+  }
+
+  // ✅ NEW: Activity aggregation job
+  if (job.jobType === "activity") {
+    const count = await syncActivity(handle);
+
+    await prisma.syncJob.update({
+      where: { id: job.id },
+      data: { recordsProcessed: count },
+    });
   }
 }
-
 
 async function runWorker() {
   console.log("🚀 Sync Worker started");
@@ -92,7 +120,7 @@ async function runWorker() {
         data: { status: "completed", completedAt: new Date() },
       });
 
-      console.log(`✅ Job ${job.id} completed`);
+      console.log(`✅ Job ${job.id} (${job.jobType}) completed`);
     } catch (err) {
       console.error(err);
 
@@ -159,11 +187,87 @@ async function syncSubmissions(handle) {
     fetched += submissions.length;
     from += BATCH_SIZE;
 
-    // Stop if less than batch size (end reached)
     if (submissions.length < BATCH_SIZE) break;
   }
 
   return fetched;
+}
+
+// ✅ NEW: Aggregate submissions + contests into Activity table
+async function syncActivity(handle) {
+  // 1️⃣ Fetch all submissions for this handle
+  const submissions = await prisma.submission.findMany({
+    where: { handleId: handle.id },
+    select: {
+      creationTime: true,
+      verdict: true,
+      problemId: true,
+    },
+  });
+
+  // 2️⃣ Fetch all contest participations for this handle
+  const participations = await prisma.contestParticipation.findMany({
+    where: { handleId: handle.id },
+    select: {
+      participatedAt: true,
+    },
+  });
+
+  // 3️⃣ Group submissions by date (YYYY-MM-DD)
+  // dayMap structure: { "2024-11-03": { submissionCount, solvedProblemIds: Set } }
+  const dayMap = {};
+
+  const toDateKey = (dt) => dt.toISOString().slice(0, 10); // "YYYY-MM-DD"
+
+  for (const s of submissions) {
+    const key = toDateKey(s.creationTime);
+    if (!dayMap[key]) {
+      dayMap[key] = { submissionCount: 0, solvedProblemIds: new Set(), contestsAttended: 0 };
+    }
+    dayMap[key].submissionCount += 1;
+    if (s.verdict === "OK") {
+      dayMap[key].solvedProblemIds.add(s.problemId);
+    }
+  }
+
+  // 4️⃣ Group contest participations by date
+  for (const p of participations) {
+    const key = toDateKey(p.participatedAt);
+    if (!dayMap[key]) {
+      dayMap[key] = { submissionCount: 0, solvedProblemIds: new Set(), contestsAttended: 0 };
+    }
+    dayMap[key].contestsAttended += 1;
+  }
+
+  // 5️⃣ Upsert each day into Activity table
+  let upsertCount = 0;
+
+  for (const [dateKey, data] of Object.entries(dayMap)) {
+    await prisma.activity.upsert({
+      where: {
+        handleId_date: {
+          handleId: handle.id,
+          date: new Date(dateKey), // Prisma @db.Date handles this correctly
+        },
+      },
+      update: {
+        submissionCount: data.submissionCount,
+        problemsSolved: data.solvedProblemIds.size,
+        contestsAttended: data.contestsAttended,
+      },
+      create: {
+        handleId: handle.id,
+        date: new Date(dateKey),
+        submissionCount: data.submissionCount,
+        problemsSolved: data.solvedProblemIds.size,
+        contestsAttended: data.contestsAttended,
+      },
+    });
+    upsertCount++;
+  }
+
+  console.log(`📅 Activity synced: ${upsertCount} days for handle ${handle.handle}`);
+  return upsertCount;
 }
 
 runWorker();
