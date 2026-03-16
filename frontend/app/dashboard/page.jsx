@@ -8,21 +8,20 @@ import StatCard from "./components/StatCard";
 import RatingChart from "./components/RatingChart";
 import useSummary from "./hooks/useSummary";
 import FocusAreas from "./components/FocusAreas";
+import ActivityHeatmap from "./components/ActivityHeatmap";
 
 export default function DashboardPage() {
   const [syncKey, setSyncKey] = useState(0);
   const { data: summary, loading } = useSummary(syncKey);
 
   return (
-    // CHANGE 1: 'h-screen' locks the height, 'overflow-hidden' prevents window scrolling
     <div className="flex h-screen bg-[#09090b] text-[#E4E4E7] font-sans overflow-hidden selection:bg-white/20">
-      
-      {/* Sidebar is now locked in place because the parent doesn't scroll */}
+
       <Sidebar />
 
-      {/* CHANGE 2: 'overflow-y-auto' makes ONLY this section scrollable */}
       <main className="flex-1 px-10 py-8 overflow-y-auto">
-        
+
+        {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
@@ -35,11 +34,12 @@ export default function DashboardPage() {
           />
         </motion.div>
 
+        {/* Stat Cards */}
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1, duration: 0.5 }}
-          className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 mb-12"
+          className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-10"
         >
           <StatCard
             label="CURRENT RATING"
@@ -69,40 +69,41 @@ export default function DashboardPage() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.2 }}
-            className="space-y-10 pb-10" 
+            className="space-y-10 pb-10"
           >
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
+
+            {/* Row 1: Rating Chart + Focus Areas */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
               <div className="lg:col-span-2 space-y-4">
                 <h3 className="text-xl font-serif text-white">Performance History</h3>
                 <div className="h-[320px] w-full">
                   <RatingChart refreshKey={syncKey} />
                 </div>
               </div>
-
               <div className="lg:col-span-1 pt-2">
                 <FocusAreas refreshKey={syncKey} />
               </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-10 border-t border-zinc-900 pt-10">
-              <div className="lg:col-span-1 space-y-4">
-                <h3 className="text-xl font-serif text-white">Activity</h3>
-                <div className="bg-[#18181b] border border-zinc-800 rounded-xl h-56 flex items-center justify-center">
-                  <span className="text-zinc-600 font-serif italic text-sm">
-                    Activity Heatmap
-                  </span>
-                </div>
-              </div>
-
-              <div className="lg:col-span-2 space-y-4">
-                <h3 className="text-xl font-serif text-white">Recent Contests</h3>
-                <div className="bg-[#18181b] border border-zinc-800 rounded-xl h-56 flex items-center justify-center">
-                   <span className="text-zinc-600 font-serif italic text-sm">
-                    Contest Table
-                  </span>
-                </div>
+            {/* Row 2: Activity Heatmap — full width */}
+            <div className="border-t border-zinc-900 pt-10 space-y-4">
+              <h3 className="text-xl font-serif text-white">Activity</h3>
+              {/* min-w-0 prevents the heatmap from overflowing the column */}
+              <div className="w-full min-w-0">
+                <ActivityHeatmap />
               </div>
             </div>
+
+            {/* Row 3: Recent Contests — full width, below heatmap */}
+            <div className="border-t border-zinc-900 pt-10 space-y-4">
+              <h3 className="text-xl font-serif text-white">Recent Contests</h3>
+              <div className="bg-[#18181b] border border-zinc-800 rounded-xl h-56 flex items-center justify-center">
+                <span className="text-zinc-600 font-serif italic text-sm">
+                  Contest Table
+                </span>
+              </div>
+            </div>
+
           </motion.div>
         )}
       </main>
