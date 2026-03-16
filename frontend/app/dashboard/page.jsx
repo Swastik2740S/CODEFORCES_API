@@ -10,6 +10,35 @@ import useSummary from "./hooks/useSummary";
 import FocusAreas from "./components/FocusAreas";
 import ActivityHeatmap from "./components/ActivityHeatmap";
 
+// Insight components
+import ContestExtremes    from "./components/ContestExtremes";
+import ContestHistory     from "./components/ContestHistory";
+import RatingHistoryChart from "./components/RatingHistoryChart";
+import VerdictStats       from "./components/VerdictStats";
+import LanguageStats      from "./components/LanguageStats";
+import DifficultyStats    from "./components/DifficultyStats";
+import AttemptsStats      from "./components/AttemptsStats";
+import TagMastery         from "./components/TagMastery";
+
+// ── Reusable section wrapper ──────────────────────────────────────────────────
+function Section({ title, children, delay = 0 }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay, duration: 0.45, ease: "easeOut" }}
+      className="border-t border-zinc-900 pt-10 space-y-5"
+    >
+      <div className="flex items-center gap-3">
+        <div className="w-1 h-5 rounded-full bg-cyan-500/60" />
+        <h3 className="text-xl font-serif text-white">{title}</h3>
+      </div>
+      {children}
+    </motion.div>
+  );
+}
+
+// ── Page ──────────────────────────────────────────────────────────────────────
 export default function DashboardPage() {
   const [syncKey, setSyncKey] = useState(0);
   const { data: summary, loading } = useSummary(syncKey);
@@ -69,10 +98,10 @@ export default function DashboardPage() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.2 }}
-            className="space-y-10 pb-10"
+            className="space-y-10 pb-16"
           >
 
-            {/* Row 1: Rating Chart + Focus Areas */}
+            {/* ── Performance History + Focus Areas ── */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
               <div className="lg:col-span-2 space-y-4">
                 <h3 className="text-xl font-serif text-white">Performance History</h3>
@@ -85,24 +114,50 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            {/* Row 2: Activity Heatmap — full width */}
-            <div className="border-t border-zinc-900 pt-10 space-y-4">
-              <h3 className="text-xl font-serif text-white">Activity</h3>
-              {/* min-w-0 prevents the heatmap from overflowing the column */}
+            {/* ── Activity Heatmap ── */}
+            <Section title="Activity" delay={0.05}>
               <div className="w-full min-w-0">
                 <ActivityHeatmap />
               </div>
-            </div>
+            </Section>
 
-            {/* Row 3: Recent Contests — full width, below heatmap */}
-            <div className="border-t border-zinc-900 pt-10 space-y-4">
-              <h3 className="text-xl font-serif text-white">Recent Contests</h3>
-              <div className="bg-[#18181b] border border-zinc-800 rounded-xl h-56 flex items-center justify-center">
-                <span className="text-zinc-600 font-serif italic text-sm">
-                  Contest Table
-                </span>
+            {/* ── Contest Overview: streaks + extremes ── */}
+            <Section title="Contest Overview" delay={0.08}>
+              <ContestExtremes />
+            </Section>
+
+            {/* ── Rating Progression ── */}
+            <Section title="Rating Progression" delay={0.1}>
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
+                <RatingHistoryChart />
               </div>
-            </div>
+            </Section>
+
+            {/* ── Recent Contests table ── */}
+            <Section title="Recent Contests" delay={0.12}>
+              <ContestHistory />
+            </Section>
+
+            {/* ── Submission Insights ── */}
+            <Section title="Submission Insights" delay={0.14}>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <VerdictStats />
+                <LanguageStats />
+              </div>
+            </Section>
+
+            {/* ── Problem Analysis ── */}
+            <Section title="Problem Analysis" delay={0.16}>
+              <AttemptsStats />
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
+                <DifficultyStats />
+              </div>
+            </Section>
+
+            {/* ── Tag Mastery ── */}
+            <Section title="Tag Mastery" delay={0.18}>
+              <TagMastery />
+            </Section>
 
           </motion.div>
         )}
