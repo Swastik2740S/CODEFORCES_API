@@ -2,10 +2,16 @@ const authService = require('../services/auth.service');
 const prisma = require("../client");
 const { verifyToken } = require("../utils/jwt");
 
+// ✅ Dynamic cookie options based on environment
+// In production: sameSite "none" + secure true = allows cross-origin cookies (requires HTTPS)
+// In development: sameSite "lax" + secure false = works on plain HTTP localhost
+const isProd = process.env.NODE_ENV === "production";
+
 const COOKIE_OPTIONS = {
   httpOnly: true,
-  sameSite: 'lax',
-  secure: false, // true in production (HTTPS)
+  sameSite: isProd ? "none" : "lax",
+  secure: isProd,
+  maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days in ms
 };
 
 exports.register = async (req, res) => {
@@ -33,7 +39,7 @@ exports.login = async (req, res) => {
 };
 
 exports.logout = (req, res) => {
-  res.clearCookie('access_token');
+  res.clearCookie('access_token', COOKIE_OPTIONS);
   res.json({ message: 'Logged out' });
 };
 
