@@ -19,7 +19,6 @@ RUN npx prisma generate
 FROM node:22-alpine AS runner
 WORKDIR /app
 
-ENV NODE_ENV=production
 
 # Copy production node_modules
 COPY --from=deps /app/node_modules ./node_modules

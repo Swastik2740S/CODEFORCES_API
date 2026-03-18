@@ -8,6 +8,7 @@ import { useRouter } from "next/navigation";
 export default function AuthPage() {
   const router = useRouter();
   const API_BASE = process.env.NEXT_PUBLIC_URL;
+  console.log("API_BASE:", API_BASE);
 
 
   const [activeTab, setActiveTab] = useState("signin");

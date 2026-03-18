@@ -12,7 +12,7 @@ services:
       - DATABASE_URL=${DATABASE_URL}
       - JWT_SECRET=${JWT_SECRET}
       - JWT_EXPIRES_IN=${JWT_EXPIRES_IN}
-      - NODE_ENV=production
+      - NODE_ENV=development
       - FRONTEND_URL=${FRONTEND_URL}
     restart: unless-stopped
     command: sh -c "npx prisma migrate deploy && node server.js"
