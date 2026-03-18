@@ -1,6 +1,8 @@
 const prisma = require("../client");
 const cf = require("../services/codeforces.service");
 
+const FAILURE_COOLDOWN = 10000;
+
 async function processJob(job) {
   const handle = await prisma.codeforcesHandle.findUnique({
     where: { id: job.handleId },
@@ -10,7 +12,6 @@ async function processJob(job) {
 
   if (job.jobType === "profile") {
     const profile = await cf.getUserInfo(handle.handle);
-
     await prisma.codeforcesHandle.update({
       where: { id: handle.id },
       data: {
@@ -28,14 +29,10 @@ async function processJob(job) {
 
   if (job.jobType === "ratings") {
     const ratings = await cf.getUserRating(handle.handle);
-
     for (const r of ratings) {
       await prisma.ratingChange.upsert({
         where: {
-          handleId_contestId: {
-            handleId: handle.id,
-            contestId: r.contestId,
-          },
+          handleId_contestId: { handleId: handle.id, contestId: r.contestId },
         },
         update: {},
         create: {
@@ -60,8 +57,6 @@ async function processJob(job) {
       data: { recordsProcessed: count },
     });
 
-    // ✅ Auto-enqueue activity sync after submissions are done
-    // Check no activity job is already pending/running for this handle
     const existingActivityJob = await prisma.syncJob.findFirst({
       where: {
         handleId: handle.id,
@@ -72,20 +67,14 @@ async function processJob(job) {
 
     if (!existingActivityJob) {
       await prisma.syncJob.create({
-        data: {
-          jobType: "activity",
-          status: "pending",
-          handleId: handle.id,
-        },
+        data: { jobType: "activity", status: "pending", handleId: handle.id },
       });
       console.log(`📌 Activity sync job auto-queued for handle ${handle.handle}`);
     }
   }
 
-  // ✅ NEW: Activity aggregation job
   if (job.jobType === "activity") {
     const count = await syncActivity(handle);
-
     await prisma.syncJob.update({
       where: { id: job.id },
       data: { recordsProcessed: count },
@@ -97,10 +86,19 @@ async function runWorker() {
   console.log("🚀 Sync Worker started");
 
   while (true) {
-    const job = await prisma.syncJob.findFirst({
-      where: { status: "pending" },
-      orderBy: { startedAt: "asc" },
-    });
+    // ✅ Neon free tier pauses DB after ~5min of inactivity (cold start).
+    // Without this try/catch the worker crashes instead of waiting to reconnect.
+    let job;
+    try {
+      job = await prisma.syncJob.findFirst({
+        where: { status: "pending" },
+        orderBy: { startedAt: "asc" },
+      });
+    } catch (dbErr) {
+      console.warn(`⚠️  DB unreachable (Neon waking up): ${dbErr.message}`);
+      await new Promise((r) => setTimeout(r, 5000)); // wait 5s then retry
+      continue;
+    }
 
     if (!job) {
       await new Promise((r) => setTimeout(r, 2000));
@@ -121,8 +119,14 @@ async function runWorker() {
       });
 
       console.log(`✅ Job ${job.id} (${job.jobType}) completed`);
+
     } catch (err) {
-      console.error(err);
+      const isNetworkErr = ["ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "ENOTFOUND"].includes(err.code);
+      if (isNetworkErr) {
+        console.error(`❌ Job ${job.id} (${job.jobType}) failed — network error: ${err.message}`);
+      } else {
+        console.error(`❌ Job ${job.id} (${job.jobType}) failed:`, err);
+      }
 
       await prisma.syncJob.update({
         where: { id: job.id },
@@ -132,26 +136,27 @@ async function runWorker() {
           completedAt: new Date(),
         },
       });
+
+      console.log(`⏳ Cooling down for ${FAILURE_COOLDOWN / 1000}s after failure...`);
+      await new Promise((r) => setTimeout(r, FAILURE_COOLDOWN));
     }
   }
 }
 
 async function syncSubmissions(handle) {
   let from = 1;
-  const BATCH_SIZE = 1000;
+  const BATCH_SIZE = 200;
+  const BATCH_DELAY = 1500;
   let fetched = 0;
 
   while (true) {
-    const submissions = await cf.getUserSubmissions(
-      handle.handle,
-      from,
-      BATCH_SIZE
-    );
+    const submissions = await cf.getUserSubmissions(handle.handle, from, BATCH_SIZE);
 
     if (submissions.length === 0) break;
 
+    console.log(`  📦 Batch from=${from}: ${submissions.length} submissions`);
+
     for (const s of submissions) {
-      // 1️⃣ Ensure problem exists
       const problem = await prisma.problem.upsert({
         where: {
           contestId_index: {
@@ -169,7 +174,6 @@ async function syncSubmissions(handle) {
         },
       });
 
-      // 2️⃣ Insert submission (idempotent)
       await prisma.submission.upsert({
         where: { submissionId: s.id },
         update: {},
@@ -188,36 +192,27 @@ async function syncSubmissions(handle) {
     from += BATCH_SIZE;
 
     if (submissions.length < BATCH_SIZE) break;
+
+    await new Promise((r) => setTimeout(r, BATCH_DELAY));
   }
 
+  console.log(`  ✔ Total submissions fetched: ${fetched}`);
   return fetched;
 }
 
-// ✅ NEW: Aggregate submissions + contests into Activity table
 async function syncActivity(handle) {
-  // 1️⃣ Fetch all submissions for this handle
   const submissions = await prisma.submission.findMany({
     where: { handleId: handle.id },
-    select: {
-      creationTime: true,
-      verdict: true,
-      problemId: true,
-    },
+    select: { creationTime: true, verdict: true, problemId: true },
   });
 
-  // 2️⃣ Fetch all contest participations for this handle
   const participations = await prisma.contestParticipation.findMany({
     where: { handleId: handle.id },
-    select: {
-      participatedAt: true,
-    },
+    select: { participatedAt: true },
   });
 
-  // 3️⃣ Group submissions by date (YYYY-MM-DD)
-  // dayMap structure: { "2024-11-03": { submissionCount, solvedProblemIds: Set } }
   const dayMap = {};
-
-  const toDateKey = (dt) => dt.toISOString().slice(0, 10); // "YYYY-MM-DD"
+  const toDateKey = (dt) => dt.toISOString().slice(0, 10);
 
   for (const s of submissions) {
     const key = toDateKey(s.creationTime);
@@ -225,12 +220,9 @@ async function syncActivity(handle) {
       dayMap[key] = { submissionCount: 0, solvedProblemIds: new Set(), contestsAttended: 0 };
     }
     dayMap[key].submissionCount += 1;
-    if (s.verdict === "OK") {
-      dayMap[key].solvedProblemIds.add(s.problemId);
-    }
+    if (s.verdict === "OK") dayMap[key].solvedProblemIds.add(s.problemId);
   }
 
-  // 4️⃣ Group contest participations by date
   for (const p of participations) {
     const key = toDateKey(p.participatedAt);
     if (!dayMap[key]) {
@@ -239,17 +231,11 @@ async function syncActivity(handle) {
     dayMap[key].contestsAttended += 1;
   }
 
-  // 5️⃣ Upsert each day into Activity table
   let upsertCount = 0;
 
   for (const [dateKey, data] of Object.entries(dayMap)) {
     await prisma.activity.upsert({
-      where: {
-        handleId_date: {
-          handleId: handle.id,
-          date: new Date(dateKey), // Prisma @db.Date handles this correctly
-        },
-      },
+      where: { handleId_date: { handleId: handle.id, date: new Date(dateKey) } },
       update: {
         submissionCount: data.submissionCount,
         problemsSolved: data.solvedProblemIds.size,
