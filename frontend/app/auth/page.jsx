@@ -1,25 +1,21 @@
 "use client";
 
 import { useState } from "react";
-import { LayoutGrid, Eye, EyeOff, BarChart3, AlertCircle, Loader2 } from "lucide-react";
-import Link from "next/link";
+import { LayoutGrid, Eye, EyeOff, AlertCircle, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 export default function AuthPage() {
   const router = useRouter();
-  const API_BASE = "/backend";
-  console.log("API_BASE:", API_BASE);
 
+  // ✅ Use /api prefix — Next.js rewrites proxy this to EC2
+  // This keeps everything same-origin so cookies work correctly
+  const API_BASE = "/api";
 
-  const [activeTab, setActiveTab] = useState("signin");
+  const [activeTab, setActiveTab]     = useState("signin");
   const [showPassword, setShowPassword] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState("");
-
-  const [formData, setFormData] = useState({
-    email: "",
-    password: "",
-  });
+  const [isLoading, setIsLoading]     = useState(false);
+  const [error, setError]             = useState("");
+  const [formData, setFormData]       = useState({ email: "", password: "" });
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -38,8 +34,7 @@ export default function AuthPage() {
     setError("");
 
     try {
-      const endpoint =
-        activeTab === "signin" ? "/auth/login" : "/auth/register";
+      const endpoint = activeTab === "signin" ? "/auth/login" : "/auth/register";
 
       const res = await fetch(`${API_BASE}${endpoint}`, {
         method: "POST",
@@ -53,7 +48,8 @@ export default function AuthPage() {
         throw new Error(data.error || "Authentication failed");
       }
 
-      // 🔍 BACKEND-DRIVEN ROUTING
+      // Cookie is now set on same origin (localhost:3000) via Next.js proxy
+      // Bootstrap call will correctly receive the cookie
       const bootstrapRes = await fetch(`${API_BASE}/user/bootstrap`, {
         credentials: "include",
       });
@@ -75,8 +71,6 @@ export default function AuthPage() {
       setIsLoading(false);
     }
   }
-
-
 
   return (
     <div className="min-h-screen bg-[#111111] text-white flex flex-col items-center justify-center p-4">
@@ -103,10 +97,11 @@ export default function AuthPage() {
             <button
               key={tab}
               onClick={() => handleTabSwitch(tab)}
-              className={`flex-1 py-1.5 text-sm rounded-md transition-all ${activeTab === tab
-                ? "bg-[#262626] text-white shadow"
-                : "text-gray-500 hover:text-gray-300"
-                }`}
+              className={`flex-1 py-1.5 text-sm rounded-md transition-all ${
+                activeTab === tab
+                  ? "bg-[#262626] text-white shadow"
+                  : "text-gray-500 hover:text-gray-300"
+              }`}
             >
               {tab === "signin" ? "Sign In" : "Create Account"}
             </button>
@@ -115,7 +110,7 @@ export default function AuthPage() {
 
         {/* Error */}
         {error && (
-          <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/20 flex items-center gap-2 text-red-400 text-sm animate-shake">
+          <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/20 flex items-center gap-2 text-red-400 text-sm">
             <AlertCircle className="w-4 h-4" />
             {error}
           </div>
@@ -123,7 +118,6 @@ export default function AuthPage() {
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Email */}
           <div>
             <label className="text-xs text-gray-400">Email address</label>
             <input
@@ -137,7 +131,6 @@ export default function AuthPage() {
             />
           </div>
 
-          {/* Password */}
           <div>
             <label className="text-xs text-gray-400">Password</label>
             <div className="relative">
@@ -160,7 +153,6 @@ export default function AuthPage() {
             </div>
           </div>
 
-          {/* Submit */}
           <button
             type="submit"
             disabled={isLoading}
@@ -178,9 +170,6 @@ export default function AuthPage() {
             )}
           </button>
         </form>
-
-
-        
       </div>
     </div>
   );
