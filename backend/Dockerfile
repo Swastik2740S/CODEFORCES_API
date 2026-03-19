@@ -19,6 +19,7 @@ RUN npx prisma generate
 FROM node:22-alpine AS runner
 WORKDIR /app
 
+# No ENV NODE_ENV here — it comes from docker-compose environment
 
 # Copy production node_modules
 COPY --from=deps /app/node_modules ./node_modules
@@ -30,5 +31,7 @@ COPY --from=prisma /app/node_modules/@prisma ./node_modules/@prisma
 # Copy app source
 COPY . .
 
-# Worker never binds a port — it just runs continuously
-CMD ["node", "worker/syncWorker.js"]
+EXPOSE 8080
+
+# ✅ Fixed: API server runs server.js, not syncWorker.js
+CMD ["node", "server.js"]
