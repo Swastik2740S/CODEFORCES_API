@@ -1,40 +1,51 @@
 "use client";
+
 import { motion } from "framer-motion";
 import { useContestExtremes } from "../hooks/useInsights";
 
 function ExtremeCard({ label, contestName, detail, accent, delay }) {
+  // Define glass themes based on the semantic accent
+  const themes = {
+    success: {
+      bg: "bg-emerald-500/10",
+      border: "border-emerald-500/20",
+      text: "text-emerald-400",
+    },
+    danger: {
+      bg: "bg-red-500/10",
+      border: "border-red-500/20",
+      text: "text-red-400",
+    },
+    brand: {
+      bg: "bg-[#D85D3F]/10",
+      border: "border-[#D85D3F]/20",
+      text: "text-[#D85D3F]",
+    },
+    default: {
+      bg: "bg-white/[0.03]",
+      border: "border-white/10",
+      text: "text-white",
+    },
+  };
+
+  const activeTheme = themes[accent] || themes.default;
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay, duration: 0.4 }}
-      className={`rounded-xl border p-4 flex flex-col gap-1.5 ${
-        accent === "green"
-          ? "bg-emerald-950/30 border-emerald-800/40"
-          : accent === "red"
-          ? "bg-red-950/30 border-red-800/40"
-          : accent === "cyan"
-          ? "bg-cyan-950/30 border-cyan-800/40"
-          : "bg-zinc-800/40 border-zinc-700/40"
-      }`}
+      className={`rounded-2xl border p-4 sm:p-5 flex flex-col gap-1.5 backdrop-blur-md shadow-lg transition-transform hover:scale-[1.02] ${activeTheme.bg} ${activeTheme.border}`}
     >
-      <span className="text-[10px] uppercase tracking-widest text-zinc-500 font-medium">
+      <span className="text-[10px] sm:text-xs uppercase tracking-widest text-gray-500 font-medium truncate">
         {label}
       </span>
-      <span
-        className={`text-lg font-bold tabular-nums ${
-          accent === "green"
-            ? "text-emerald-400"
-            : accent === "red"
-            ? "text-red-400"
-            : accent === "cyan"
-            ? "text-cyan-400"
-            : "text-zinc-100"
-        }`}
-      >
+      <span className={`text-lg sm:text-xl font-bold tabular-nums tracking-tight truncate ${activeTheme.text}`}>
         {detail}
       </span>
-      <span className="text-xs text-zinc-500 truncate">{contestName}</span>
+      <span className="text-[10px] sm:text-xs text-gray-400 truncate" title={contestName}>
+        {contestName}
+      </span>
     </motion.div>
   );
 }
@@ -45,18 +56,18 @@ function StreakCard({ label, value, accent, delay }) {
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay, duration: 0.4 }}
-      className={`rounded-xl border p-4 flex flex-col gap-1 ${
+      className={`rounded-2xl border p-4 sm:p-5 flex flex-col gap-1 backdrop-blur-md shadow-lg transition-transform hover:scale-[1.02] ${
         accent
-          ? "bg-violet-950/30 border-violet-800/40"
-          : "bg-zinc-800/40 border-zinc-700/40"
+          ? "bg-[#D85D3F]/10 border-[#D85D3F]/20"
+          : "bg-white/[0.03] border-white/10"
       }`}
     >
-      <span className="text-[10px] uppercase tracking-widest text-zinc-500 font-medium">
+      <span className="text-[10px] sm:text-xs uppercase tracking-widest text-gray-500 font-medium truncate">
         {label}
       </span>
-      <span className={`text-2xl font-bold tabular-nums ${accent ? "text-violet-400" : "text-zinc-100"}`}>
+      <span className={`text-2xl sm:text-3xl font-bold tabular-nums tracking-tight ${accent ? "text-[#D85D3F]" : "text-white"}`}>
         {value}
-        <span className="text-sm font-normal text-zinc-500 ml-1">contests</span>
+        <span className="text-xs sm:text-sm font-normal text-gray-500 ml-1.5">contests</span>
       </span>
     </motion.div>
   );
@@ -65,50 +76,72 @@ function StreakCard({ label, value, accent, delay }) {
 export default function ContestExtremes() {
   const { data, loading, error } = useContestExtremes();
 
-  if (loading) return <SectionSkeleton rows={1} cols={6} />;
+  if (loading) return <SectionSkeleton cols={6} />;
   if (error || !data?.extremes) return <Empty message="No contest data yet." />;
 
   const { extremes, totalContests, currentStreak, bestStreak } = data;
 
   return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
-        <StreakCard label="Current Streak"  value={currentStreak} accent  delay={0.05} />
-        <StreakCard label="Best Streak"     value={bestStreak}           delay={0.08} />
+    <div className="space-y-4">
+      {/* Grid Strategy: 
+        Mobile: 2 columns
+        Tablet: 3 columns
+        Desktop: 6 columns
+      */}
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 sm:gap-4 w-full">
+        
+        <StreakCard 
+          label="Current Streak"  
+          value={currentStreak} 
+          accent  
+          delay={0.05} 
+        />
+        <StreakCard 
+          label="Best Streak"     
+          value={bestStreak}           
+          delay={0.08} 
+        />
+        
         <ExtremeCard
           label="Best Rank"
           contestName={extremes.bestRank.contestName}
           detail={`Rank #${extremes.bestRank.rank.toLocaleString()}`}
-          accent="cyan" delay={0.11}
+          accent="brand" 
+          delay={0.11}
         />
         <ExtremeCard
           label="Worst Rank"
           contestName={extremes.worstRank.contestName}
           detail={`Rank #${extremes.worstRank.rank.toLocaleString()}`}
+          accent="default"
           delay={0.14}
         />
+        
         <ExtremeCard
           label="Biggest Gain"
           contestName={extremes.biggestGain.contestName}
           detail={`+${extremes.biggestGain.ratingChange}`}
-          accent="green" delay={0.17}
+          accent="success" 
+          delay={0.17}
         />
         <ExtremeCard
           label="Biggest Drop"
           contestName={extremes.biggestDrop.contestName}
-          detail={`${extremes.biggestDrop.ratingChange}`}
-          accent="red" delay={0.20}
+          detail={`${extremes.biggestDrop.ratingChange}`} // Assuming this number is already negative
+          accent="danger" 
+          delay={0.20}
         />
+        
       </div>
     </div>
   );
 }
 
-function SectionSkeleton({ cols = 4 }) {
+function SectionSkeleton({ cols = 6 }) {
   return (
-    <div className={`grid grid-cols-2 lg:grid-cols-${cols} gap-3 animate-pulse`}>
+    <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 sm:gap-4 animate-pulse w-full">
       {[...Array(cols)].map((_, i) => (
-        <div key={i} className="h-20 rounded-xl bg-zinc-800" />
+        <div key={i} className="h-24 sm:h-28 rounded-2xl bg-white/5 border border-white/10 backdrop-blur-md shadow-sm" />
       ))}
     </div>
   );
@@ -116,8 +149,8 @@ function SectionSkeleton({ cols = 4 }) {
 
 function Empty({ message }) {
   return (
-    <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-6 text-center">
-      <p className="text-zinc-500 text-sm italic">{message}</p>
+    <div className="rounded-3xl border border-white/10 bg-white/[0.03] backdrop-blur-xl p-8 text-center shadow-lg">
+      <p className="text-gray-500 text-sm">{message}</p>
     </div>
   );
 }

@@ -4,35 +4,58 @@ import { motion } from "framer-motion";
 import useFocusAreas from "../hooks/useFocusAreas";
 
 export default function FocusAreas({ refreshKey }) {
-  // Accepted refreshKey to trigger re-fetches when the dashboard syncs
   const { data, loading } = useFocusAreas(refreshKey);
 
-  // Loading State: Minimalist, Serif, Italic
+  // ── Loading State (Glass Skeleton) ──
   if (loading) {
     return (
-      <div className="h-full flex items-center justify-center text-zinc-600 font-serif italic text-sm">
-        Analyzing performance...
+      <div className="bg-white/[0.03] backdrop-blur-xl border border-white/10 rounded-3xl p-6 sm:p-8 h-full min-h-[300px] flex flex-col shadow-lg animate-pulse">
+        {/* Fake Header */}
+        <div className="flex items-center gap-3 mb-8">
+          <div className="w-1.5 h-6 rounded-full bg-white/10" />
+          <div className="w-32 h-6 bg-white/5 rounded-md" />
+        </div>
+        
+        {/* Fake Progress Bars */}
+        <div className="space-y-6 flex-1 flex flex-col justify-center">
+          {[...Array(5)].map((_, i) => (
+            <div key={i} className="space-y-2.5">
+              <div className="flex justify-between">
+                <div className="w-24 h-3 bg-white/5 rounded-md" />
+                <div className="w-8 h-3 bg-white/5 rounded-md" />
+              </div>
+              <div className="w-full h-[3px] bg-white/5 rounded-full" />
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
 
-  // Empty State
+  // ── Empty State ──
   if (!data || data.length === 0) {
     return (
-      <div className="h-full flex items-center justify-center text-zinc-600 font-serif italic text-sm">
-        No focus areas identified.
+      <div className="bg-white/[0.03] backdrop-blur-xl border border-white/10 rounded-3xl p-6 sm:p-8 h-full min-h-[300px] flex items-center justify-center shadow-lg">
+        <div className="text-gray-500 font-serif italic text-sm text-center">
+          No focus areas identified.
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="w-full">
-      {/* Header: Serif font matches the Dashboard Title */}
-      <h3 className="text-xl font-serif text-white mb-6">
-        Focus Areas
-      </h3>
+    <div className="bg-white/[0.03] backdrop-blur-xl border border-white/10 rounded-3xl p-6 sm:p-8 shadow-xl h-full w-full flex flex-col">
+      
+      {/* ── Header ── */}
+      <div className="flex items-center gap-3 mb-6 sm:mb-8">
+        <div className="w-1.5 h-5 sm:h-6 rounded-full bg-[#D85D3F] shadow-[0_0_10px_rgba(216,93,63,0.6)]" />
+        <h3 className="text-xl sm:text-2xl font-serif text-white tracking-wide">
+          Focus Areas
+        </h3>
+      </div>
 
-      <div className="space-y-6">
+      {/* ── Progress Bars ── */}
+      <div className="space-y-5 sm:space-y-6 flex-1 flex flex-col justify-center">
         {data.map((area, index) => (
           <motion.div
             key={area.label}
@@ -43,19 +66,19 @@ export default function FocusAreas({ refreshKey }) {
           >
             {/* Label & Value Row */}
             <div className="flex justify-between items-end mb-2">
-              <span className="text-sm font-sans font-medium text-zinc-400 capitalize group-hover:text-zinc-200 transition-colors">
+              <span className="text-xs sm:text-sm font-sans font-medium text-gray-400 capitalize group-hover:text-gray-200 transition-colors">
                 {area.label}
               </span>
-              <span className="text-sm font-sans font-bold text-white">
+              <span className="text-xs sm:text-sm font-sans font-bold text-white tabular-nums">
                 {area.value}%
               </span>
             </div>
 
-            {/* Progress Bar Track: Very thin (h-[2px]) and dark */}
-            <div className="w-full h-[2px] bg-zinc-800 rounded-full overflow-hidden">
-              {/* Progress Bar Fill: White with a subtle glow */}
+            {/* Progress Bar Track: Darker glass track */}
+            <div className="w-full h-[3px] bg-white/5 rounded-full overflow-hidden relative">
+              {/* Progress Bar Fill: Neon Orange with heavy ease-out */}
               <motion.div
-                className="h-full bg-white rounded-full shadow-[0_0_8px_rgba(255,255,255,0.5)]"
+                className="absolute top-0 left-0 h-full bg-[#D85D3F] rounded-full shadow-[0_0_10px_rgba(216,93,63,0.8)]"
                 initial={{ width: 0 }}
                 animate={{ width: `${area.value}%` }}
                 transition={{ 

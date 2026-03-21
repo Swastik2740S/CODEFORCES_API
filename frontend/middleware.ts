@@ -6,23 +6,17 @@ export function middleware(request: NextRequest) {
 
   const token = request.cookies.get("access_token")?.value;
 
-  const publicRoutes = ["/auth"];
+  const isPublicRoute =
+    pathname === "/" || pathname.startsWith("/auth");
 
-  const isPublicRoute = publicRoutes.some((route) =>
-    pathname.startsWith(route)
-  );
-
-  // CASE 1: Not authenticated → trying to access protected route
   if (!token && !isPublicRoute) {
     return NextResponse.redirect(new URL("/auth", request.url));
   }
 
-  // CASE 2: Authenticated → trying to access auth page
-  if (token && isPublicRoute) {
+  if (token && pathname.startsWith("/auth")) {
     return NextResponse.redirect(new URL("/dashboard", request.url));
   }
 
-  // CASE 3: Allow request
   return NextResponse.next();
 }
 

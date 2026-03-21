@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   ResponsiveContainer,
-  LineChart,
-  Line,
+  AreaChart,
+  Area,
   XAxis,
   YAxis,
   Tooltip,
@@ -19,7 +19,7 @@ const ranges = [
 ];
 
 export default function RatingChart({ refreshKey }) {
-  const API_BASE = process.env.NEXT_PUBLIC_URL;
+  const API_BASE = process.env.NEXT_PUBLIC_URL || "/api";
 
   const [data, setData] = useState([]);
   const [range, setRange] = useState("6m");
@@ -32,6 +32,8 @@ export default function RatingChart({ refreshKey }) {
         const res = await fetch(`${API_BASE}/codeforces/rating-graph`, {
           credentials: "include",
         });
+        
+        if (!res.ok) throw new Error("Network response was not ok");
         const json = await res.json();
 
         const points = json.points.map((p) => ({
@@ -48,13 +50,12 @@ export default function RatingChart({ refreshKey }) {
     }
 
     load();
-  }, [refreshKey]); // Refetch when sync happens
+  }, [refreshKey]);
 
   const filtered = useMemo(() => {
     if (range === "all") return data;
     if (!data.length) return [];
     
-    // Safely find the months, defaulting to 6 if not found
     const r = ranges.find((r) => r.key === range) || ranges[0];
     const months = r.months;
     
@@ -63,36 +64,38 @@ export default function RatingChart({ refreshKey }) {
     return data.filter((d) => d.time >= cutoff);
   }, [data, range]);
 
+  // ── Glass Skeleton Loader ──
   if (loading) {
     return (
-      <div className="h-full flex items-center justify-center text-zinc-600 font-serif italic text-sm">
-        Retrieving history...
+      <div className="w-full h-full min-h-[250px] rounded-3xl border border-white/10 bg-white/[0.02] backdrop-blur-xl animate-pulse flex items-center justify-center shadow-lg">
+        <span className="text-gray-500 font-serif italic text-sm">Retrieving history...</span>
       </div>
     );
   }
 
+  // ── Empty State ──
   if (!data.length) {
     return (
-        <div className="h-full flex items-center justify-center text-zinc-600 font-serif italic text-sm">
-          No rating data available
-        </div>
-    )
+      <div className="w-full h-full min-h-[250px] rounded-3xl border border-white/10 bg-white/[0.02] backdrop-blur-xl flex items-center justify-center shadow-lg">
+        <span className="text-gray-500 font-serif italic text-sm">No rating data available.</span>
+      </div>
+    );
   }
 
   return (
-    <div className="h-full flex flex-col relative">
-      {/* Range Selectors - Positioned Absolute Top-Right to overlap with Parent Header if needed, 
-          or just standard flex. Here we use flex to keep it clean. */}
-      <div className="flex justify-end mb-2">
-        <div className="flex gap-4 text-xs font-sans font-medium">
+    <div className="h-full w-full flex flex-col relative min-h-[250px]">
+      
+      {/* ── Range Selectors ── */}
+      <div className="flex justify-end mb-4 z-10">
+        <div className="flex gap-3 sm:gap-4 text-[10px] sm:text-xs font-sans font-medium bg-white/5 p-1 rounded-lg border border-white/10 backdrop-blur-md">
           {ranges.map((r) => (
             <button
               key={r.key}
               onClick={() => setRange(r.key)}
-              className={`pb-1 transition-colors duration-300 ${
+              className={`px-3 py-1.5 rounded-md transition-all duration-300 ${
                 range === r.key
-                  ? "text-white border-b border-white"
-                  : "text-zinc-500 hover:text-zinc-300 border-b border-transparent"
+                  ? "bg-[#D85D3F]/20 text-[#D85D3F] shadow-[0_0_10px_rgba(216,93,63,0.2)]"
+                  : "text-gray-400 hover:text-gray-200 hover:bg-white/5"
               }`}
             >
               {r.label}
@@ -101,70 +104,81 @@ export default function RatingChart({ refreshKey }) {
         </div>
       </div>
 
-      {/* Chart Area */}
+      {/* ── Chart Area ── */}
       <motion.div 
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ duration: 0.8 }}
-        className="flex-1 -ml-4" // Negative margin to pull chart flush with left edge
+        className="flex-1 w-full"
       >
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={filtered}>
-            {/* Subtle Horizontal Grid Lines only */}
+          <AreaChart data={filtered} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+            
+            {/* Gradient Definition for the Area Fill */}
+            <defs>
+              <linearGradient id="colorRating" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="#D85D3F" stopOpacity={0.4}/>
+                <stop offset="95%" stopColor="#D85D3F" stopOpacity={0}/>
+              </linearGradient>
+            </defs>
+
+            {/* Soft Glass Grid Lines */}
             <CartesianGrid 
-                vertical={false} 
-                stroke="#27272a" 
-                strokeDasharray="0" 
+              vertical={false} 
+              stroke="rgba(255,255,255,0.05)" 
+              strokeDasharray="3 3" 
             />
             
             <XAxis
               dataKey="time"
               tickFormatter={(v) =>
-                new Date(v).toLocaleDateString("en-US", {
-                  month: "short",
-                })
+                new Date(v).toLocaleDateString("en-US", { month: "short" })
               }
-              tick={{ fill: "#52525b", fontSize: 10, fontFamily: "var(--font-sans)" }} // zinc-600
+              tick={{ fill: "#71717a", fontSize: 10 }}
               axisLine={false}
               tickLine={false}
-              dy={10} // Push labels down slightly
-              minTickGap={30}
+              dy={10}
+              minTickGap={20} // Prevents mobile overlap
             />
             
             <YAxis
-              tick={{ fill: "#52525b", fontSize: 10, fontFamily: "var(--font-sans)" }}
+              tick={{ fill: "#71717a", fontSize: 10 }}
               axisLine={false}
               tickLine={false}
-              width={40}
-              domain={['auto', 'auto']} // Adjust scale to fit data nicely
+              domain={['auto', 'auto']}
+              dx={-5} // Pulls numbers slightly away from the edge
             />
             
+            {/* Custom Glass Tooltip */}
             <Tooltip
               contentStyle={{
-                backgroundColor: "#18181b", // Dark Zinc
-                borderColor: "#27272a",     // Border Zinc-800
+                backgroundColor: "rgba(0, 0, 0, 0.6)",
+                backdropFilter: "blur(12px)",
+                borderColor: "rgba(255, 255, 255, 0.1)",
                 color: "#fff",
-                borderRadius: "8px",
+                borderRadius: "12px",
                 fontSize: "12px",
-                padding: "8px 12px",
-                boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.5)"
+                padding: "10px 14px",
+                boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.5)"
               }}
-              itemStyle={{ color: "#e4e4e7" }}
-              labelStyle={{ color: "#a1a1aa", marginBottom: "0.25rem" }}
+              itemStyle={{ color: "#D85D3F", fontWeight: 600 }}
+              labelStyle={{ color: "#a1a1aa", marginBottom: "4px", fontSize: "10px", textTransform: "uppercase", letterSpacing: "0.05em" }}
               labelFormatter={(v) => new Date(v).toLocaleDateString(undefined, { dateStyle: "medium" })}
-              cursor={{ stroke: "#52525b", strokeWidth: 1, strokeDasharray: "4 4" }}
+              cursor={{ stroke: "rgba(255,255,255,0.1)", strokeWidth: 1, strokeDasharray: "4 4" }}
             />
             
-            <Line
-              type="monotone" // Smooth curves
+            {/* Upgraded from <Line> to <Area> */}
+            <Area
+              type="monotone"
               dataKey="rating"
-              stroke="#fff"
-              strokeWidth={2}
-              dot={false}
-              activeDot={{ r: 6, fill: "#fff", stroke: "#000", strokeWidth: 2 }}
+              stroke="#D85D3F"
+              strokeWidth={3}
+              fillOpacity={1}
+              fill="url(#colorRating)"
+              activeDot={{ r: 6, fill: "#D85D3F", stroke: "#111", strokeWidth: 2, shadow: "0 0 10px #D85D3F" }}
               animationDuration={1500}
             />
-          </LineChart>
+          </AreaChart>
         </ResponsiveContainer>
       </motion.div>
     </div>
