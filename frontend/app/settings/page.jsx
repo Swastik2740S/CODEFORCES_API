@@ -33,10 +33,10 @@ function Section({ icon: Icon, title, subtitle, children, accent }) {
         accent ? "border-red-500/10 bg-red-950/5" : "border-white/10 bg-white/[0.02]"
       }`}
     >
-      <div className={`flex items-center gap-4 px-6 sm:px-8 py-5 sm:py-6 border-b ${
+      <div className={`flex items-center gap-3 sm:gap-4 px-5 sm:px-8 py-4 sm:py-6 border-b ${
         accent ? "border-red-500/10 bg-red-500/[0.02]" : "border-white/5 bg-white/[0.01]"
       }`}>
-        <div className={`p-2.5 rounded-xl shadow-inner ${
+        <div className={`p-2.5 rounded-xl shadow-inner shrink-0 ${
           accent ? "bg-red-500/10 text-red-400 border border-red-500/20" : "bg-[#D85D3F]/10 text-[#D85D3F] border border-[#D85D3F]/20"
         }`}>
           <Icon size={20} />
@@ -45,10 +45,10 @@ function Section({ icon: Icon, title, subtitle, children, accent }) {
           <h2 className={`text-base sm:text-lg font-serif tracking-wide ${accent ? "text-red-400" : "text-white"}`}>
             {title}
           </h2>
-          {subtitle && <p className="text-xs sm:text-sm text-gray-500 mt-0.5">{subtitle}</p>}
+          {subtitle && <p className="text-[11px] sm:text-sm text-gray-500 mt-0.5 leading-snug">{subtitle}</p>}
         </div>
       </div>
-      <div className="p-6 sm:p-8 space-y-6">{children}</div>
+      <div className="p-5 sm:p-8 space-y-6">{children}</div>
     </motion.div>
   );
 }
@@ -58,7 +58,7 @@ function Field({ label, type = "text", value, onChange, placeholder }) {
   const isPassword = type === "password";
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-1.5 sm:gap-2">
       <label className="text-[10px] sm:text-xs text-gray-500 uppercase font-semibold tracking-widest ml-1">
         {label}
       </label>
@@ -68,14 +68,15 @@ function Field({ label, type = "text", value, onChange, placeholder }) {
           value={value}
           onChange={onChange}
           placeholder={placeholder}
-          className="w-full bg-white/[0.03] border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-[#D85D3F]/50 focus:border-[#D85D3F] transition-all placeholder:text-gray-600"
+          // Using text-base on mobile prevents iOS Safari from auto-zooming when tapping inputs!
+          className="w-full bg-white/[0.03] border border-white/10 rounded-xl px-4 py-3 text-base sm:text-sm text-white focus:outline-none focus:ring-2 focus:ring-[#D85D3F]/50 focus:border-[#D85D3F] transition-all placeholder:text-gray-600"
         />
         {isPassword && (
           <button 
             onClick={() => setShow(v => !v)} 
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white transition-colors p-1"
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white transition-colors p-2"
           >
-            {show ? <EyeOff size={16} /> : <Eye size={16} />}
+            {show ? <EyeOff size={18} /> : <Eye size={18} />}
           </button>
         )}
       </div>
@@ -88,7 +89,7 @@ function SaveButton({ onClick, loading, saved, label, danger }) {
     <button
       onClick={onClick}
       disabled={loading || saved}
-      className={`flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-sm font-medium transition-all duration-300 active:scale-[0.98] disabled:opacity-70 disabled:active:scale-100 ${
+      className={`w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3.5 sm:py-3 rounded-xl text-sm font-medium transition-all duration-300 active:scale-[0.98] disabled:opacity-70 disabled:active:scale-100 ${
         danger
           ? "bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 hover:text-red-300"
           : saved 
@@ -114,7 +115,6 @@ export default function SettingsPage() {
   const [savedState, setSavedState] = useState({ profile: false, pass: false });
   const [toast, setToast] = useState(null);
 
-  // Temporary UI Toast replacement for alerts
   const showToast = (msg, isError = false) => {
     setToast({ msg, isError });
     setTimeout(() => setToast(null), 3500);
@@ -136,14 +136,10 @@ export default function SettingsPage() {
       .finally(() => setLoading(prev => ({ ...prev, page: false })));
   }, []);
 
-  // ── PROFILE ──
   const handleSaveProfile = async () => {
     setLoading(p => ({ ...p, profile: true }));
     try {
-      await apiFetch("/user/profile", {
-        method: "PATCH",
-        body: JSON.stringify({ email }),
-      });
+      await apiFetch("/user/profile", { method: "PATCH", body: JSON.stringify({ email }) });
       setSavedState(p => ({ ...p, profile: true }));
       setTimeout(() => setSavedState(p => ({ ...p, profile: false })), 2000);
     } catch (e) {
@@ -153,16 +149,12 @@ export default function SettingsPage() {
     }
   };
 
-  // ── PASSWORD ──
   const handleChangePassword = async () => {
     setLoading(p => ({ ...p, pass: true }));
     try {
       await apiFetch("/auth/change-password", {
         method: "PATCH",
-        body: JSON.stringify({
-          currentPassword: passwords.current,
-          newPassword: passwords.new,
-        }),
+        body: JSON.stringify({ currentPassword: passwords.current, newPassword: passwords.new }),
       });
       setPasswords({ current: "", new: "", confirm: "" });
       setSavedState(p => ({ ...p, pass: true }));
@@ -174,21 +166,14 @@ export default function SettingsPage() {
     }
   };
 
-  // ── HANDLES ──
   const handleAddHandle = async () => {
     if (!newHandle.trim()) return;
     setLoading(p => ({ ...p, handle: true }));
     try {
-      await apiFetch("/codeforces/link-handle", {
-        method: "POST",
-        body: JSON.stringify({ handle: newHandle.trim() }),
-      });
+      await apiFetch("/codeforces/link-handle", { method: "POST", body: JSON.stringify({ handle: newHandle.trim() }) });
       await apiFetch("/codeforces/sync", { method: "POST" });
       const data = await apiFetch("/codeforces/handles");
-      setHandles([
-        ...(data.active ? [data.active] : []),
-        ...(data.others ?? []),
-      ]);
+      setHandles([...(data.active ? [data.active] : []), ...(data.others ?? [])]);
       setNewHandle("");
       showToast("Handle added and synced successfully!");
     } catch (e) {
@@ -202,10 +187,7 @@ export default function SettingsPage() {
     try {
       await apiFetch(`/codeforces/handle/${id}/activate`, { method: "PATCH" });
       const data = await apiFetch("/codeforces/handles");
-      setHandles([
-        ...(data.active ? [data.active] : []),
-        ...(data.others ?? []),
-      ]);
+      setHandles([...(data.active ? [data.active] : []), ...(data.others ?? [])]);
     } catch (e) {
       showToast("Failed to activate handle", true);
     }
@@ -215,23 +197,16 @@ export default function SettingsPage() {
     try {
       await apiFetch(`/codeforces/handle/${id}`, { method: "DELETE" });
       const data = await apiFetch("/codeforces/handles");
-      setHandles([
-        ...(data.active ? [data.active] : []),
-        ...(data.others ?? []),
-      ]);
+      setHandles([...(data.active ? [data.active] : []), ...(data.others ?? [])]);
     } catch (e) {
       showToast("Failed to remove handle", true);
     }
   };
 
-  // ── DELETE ACCOUNT ──
   const handleDeleteAccount = async () => {
     if(!window.confirm("Are you sure? This action cannot be undone.")) return;
     try {
-      await apiFetch("/user/account", {
-        method: "DELETE",
-        body: JSON.stringify({ confirm: "DELETE" }),
-      });
+      await apiFetch("/user/account", { method: "DELETE", body: JSON.stringify({ confirm: "DELETE" }) });
       window.location.href = "/auth";
     } catch (e) {
       showToast(e.message, true);
@@ -242,7 +217,7 @@ export default function SettingsPage() {
     <div className="flex h-screen bg-[#111111] text-white">
       <Sidebar />
       <main className="flex-1 flex items-center justify-center">
-        <RefreshCw className="w-6 h-6 animate-spin text-[#D85D3F]" />
+        <RefreshCw className="w-8 h-8 animate-spin text-[#D85D3F]" />
       </main>
     </div>
   );
@@ -250,39 +225,38 @@ export default function SettingsPage() {
   return (
     <div className="flex flex-col md:flex-row h-screen bg-[#111111] text-gray-300 font-sans overflow-hidden selection:bg-[#D85D3F]/30 relative">
       
-      {/* Background Glows */}
       <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-[#D85D3F]/5 blur-[120px] rounded-full pointer-events-none" />
       
       <Sidebar className="z-20 relative" />
 
-      <main className="flex-1 px-4 sm:px-6 lg:px-10 py-8 sm:py-12 overflow-y-auto relative z-10 custom-scrollbar">
+      {/* THE FIX: Added pb-32 so the mobile floating dock doesn't hide the bottom content */}
+      <main className="flex-1 px-4 sm:px-6 lg:px-10 pt-8 sm:pt-12 pb-32 md:pb-12 overflow-y-auto relative z-10 custom-scrollbar">
         
-        {/* Floating Toast Notification */}
         <AnimatePresence>
           {toast && (
             <motion.div 
               initial={{ opacity: 0, y: -20 }} 
               animate={{ opacity: 1, y: 0 }} 
               exit={{ opacity: 0, y: -20 }}
-              className={`fixed top-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-6 py-3 rounded-full shadow-2xl backdrop-blur-md border ${
+              className={`fixed top-4 sm:top-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-5 sm:px-6 py-3 rounded-full shadow-2xl backdrop-blur-md border w-[90%] sm:w-auto justify-center ${
                 toast.isError ? "bg-red-500/10 border-red-500/20 text-red-400" : "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
               }`}
             >
-              {toast.isError ? <AlertCircle size={16} /> : <Check size={16} />}
-              <span className="text-sm font-medium">{toast.msg}</span>
+              {toast.isError ? <AlertCircle size={16} className="shrink-0" /> : <Check size={16} className="shrink-0" />}
+              <span className="text-xs sm:text-sm font-medium truncate">{toast.msg}</span>
             </motion.div>
           )}
         </AnimatePresence>
 
-        <div className="max-w-3xl mx-auto space-y-8 pb-20">
+        <div className="max-w-3xl mx-auto space-y-6 sm:space-y-8">
           
-          <div className="mb-10">
+          <div className="mb-6 sm:mb-10">
             <h1 className="text-3xl sm:text-4xl font-serif text-white tracking-tight mb-2">Settings</h1>
-            <p className="text-sm text-gray-500">Manage your account preferences and connected Codeforces integrations.</p>
+            <p className="text-xs sm:text-sm text-gray-500">Manage your account preferences and connected integrations.</p>
           </div>
 
           <Section icon={User} title="Profile Settings" subtitle="Update your basic account information.">
-            <div className="max-w-md space-y-5">
+            <div className="w-full sm:max-w-md space-y-5">
               <Field label="Email Address" value={email} onChange={e => setEmail(e.target.value)} />
               <div className="pt-2">
                 <SaveButton onClick={handleSaveProfile} loading={loading.profile} saved={savedState.profile} label="Save Changes" />
@@ -291,7 +265,7 @@ export default function SettingsPage() {
           </Section>
 
           <Section icon={Lock} title="Security" subtitle="Ensure your account is using a long, random password.">
-            <div className="max-w-md space-y-5">
+            <div className="w-full sm:max-w-md space-y-5">
               <Field label="Current Password" type="password" value={passwords.current} onChange={e => setPasswords(p => ({ ...p, current: e.target.value }))} />
               <Field label="New Password" type="password" value={passwords.new} onChange={e => setPasswords(p => ({ ...p, new: e.target.value }))} />
               <div className="pt-2">
@@ -301,9 +275,7 @@ export default function SettingsPage() {
           </Section>
 
           <Section icon={Code2} title="Codeforces Handles" subtitle="Link multiple handles to track your performance.">
-            
-            {/* Handles List */}
-            <div className="space-y-3 mb-8">
+            <div className="space-y-3 mb-6 sm:mb-8">
               {handles.length === 0 ? (
                 <div className="text-center py-6 bg-white/[0.02] border border-white/5 rounded-2xl text-sm text-gray-500 italic">
                   No handles connected yet.
@@ -312,21 +284,21 @@ export default function SettingsPage() {
                 handles.map(h => (
                   <div key={h.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl border border-white/5 bg-white/[0.02] hover:bg-white/[0.04] transition-colors group">
                     <div className="flex items-center gap-3">
-                      <span className="font-medium text-white text-lg">{h.handle}</span>
+                      <span className="font-medium text-white text-base sm:text-lg">{h.handle}</span>
                       {h.isActive && (
-                        <span className="px-2.5 py-1 rounded-md bg-[#D85D3F]/10 text-[#D85D3F] border border-[#D85D3F]/20 text-[10px] uppercase tracking-wider font-bold">
+                        <span className="px-2.5 py-1 rounded-md bg-[#D85D3F]/10 text-[#D85D3F] border border-[#D85D3F]/20 text-[9px] sm:text-[10px] uppercase tracking-wider font-bold">
                           Active Sync
                         </span>
                       )}
                     </div>
-                    <div className="flex items-center gap-2 sm:gap-4">
+                    <div className="flex items-center gap-2 w-full sm:w-auto">
                       {!h.isActive && (
-                        <button onClick={() => handleSetActive(h.id)} className="text-xs font-medium text-gray-400 hover:text-white transition-colors bg-white/5 hover:bg-white/10 px-3 py-1.5 rounded-lg border border-white/10">
+                        <button onClick={() => handleSetActive(h.id)} className="flex-1 sm:flex-none text-xs font-medium text-gray-400 hover:text-white transition-colors bg-white/5 hover:bg-white/10 px-3 py-2 sm:py-1.5 rounded-lg border border-white/10 text-center">
                           Set Active
                         </button>
                       )}
-                      <button onClick={() => handleRemoveHandle(h.id)} className="text-gray-500 hover:text-red-400 transition-colors p-2 rounded-lg hover:bg-red-500/10" title="Remove Handle">
-                        <Trash2 size={16} />
+                      <button onClick={() => handleRemoveHandle(h.id)} className="text-gray-500 hover:text-red-400 transition-colors p-2 rounded-lg hover:bg-red-500/10 shrink-0" title="Remove Handle">
+                        <Trash2 size={18} className="sm:w-4 sm:h-4" />
                       </button>
                     </div>
                   </div>
@@ -334,7 +306,6 @@ export default function SettingsPage() {
               )}
             </div>
 
-            {/* Add New Handle */}
             <div className="pt-6 border-t border-white/5">
               <label className="text-[10px] sm:text-xs text-gray-500 uppercase font-semibold tracking-widest ml-1 mb-2 block">
                 Connect New Handle
@@ -344,12 +315,12 @@ export default function SettingsPage() {
                   value={newHandle} 
                   onChange={e => setNewHandle(e.target.value)} 
                   placeholder="e.g. tourist"
-                  className="flex-1 bg-white/[0.03] border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-[#D85D3F]/50 focus:border-[#D85D3F] transition-all placeholder:text-gray-600" 
+                  className="flex-1 bg-white/[0.03] border border-white/10 rounded-xl px-4 py-3.5 sm:py-3 text-base sm:text-sm text-white focus:outline-none focus:ring-2 focus:ring-[#D85D3F]/50 focus:border-[#D85D3F] transition-all placeholder:text-gray-600" 
                 />
                 <button 
                   onClick={handleAddHandle}
                   disabled={loading.handle || !newHandle.trim()}
-                  className="px-6 py-3 rounded-xl bg-white/10 text-white hover:bg-white/20 border border-white/10 font-medium text-sm flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+                  className="w-full sm:w-auto px-6 py-3.5 sm:py-3 rounded-xl bg-white/10 text-white hover:bg-white/20 border border-white/10 font-medium text-sm flex items-center justify-center gap-2 transition-all disabled:opacity-50 active:scale-[0.98]"
                 >
                   {loading.handle ? <RefreshCw size={16} className="animate-spin" /> : <Plus size={16}/>}
                   Add Handle
@@ -359,7 +330,7 @@ export default function SettingsPage() {
           </Section>
 
           <Section icon={AlertCircle} title="Danger Zone" subtitle="Permanently delete your account and wipe all data." accent>
-            <div className="pt-2">
+            <div className="pt-1">
               <SaveButton onClick={handleDeleteAccount} label="Delete Account" danger />
             </div>
           </Section>
