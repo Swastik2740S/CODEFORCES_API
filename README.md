@@ -204,7 +204,7 @@ All DB writes use Prisma `upsert` — if a sync is interrupted and retried, no d
 | EC2 t2.micro RAM | 1 GB | Sufficient for Express + worker |
 | CF API | 2 req/sec (our limit) | Shared across all sync jobs |
 
-**Realistic user capacity at this tier: ~50–100 users**
+**Realistic user capacity at this tier: ~1000 users**
 
 With 100 users each having ~500 submissions = 50,000 submission rows. Each row is ~200 bytes = ~10MB. Well within Neon's 0.5GB limit.
 
@@ -214,7 +214,7 @@ The bottleneck is the **CF API rate limit**, not the database or server:
 - At 2 req/sec, syncing 10 users simultaneously = 10 jobs competing for the same rate limit
 - The job queue serializes this naturally — jobs process one at a time
 
-### Scaling to 1000+ Users
+### Scaling to 10000+ Users
 
 To handle more users, three changes are needed:
 
