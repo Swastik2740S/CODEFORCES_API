@@ -1,12 +1,9 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const auth = require('../middleware/auth.middleware');
 const controller = require("../controller/user.controller");
 
-router.get('/me', auth, (req, res) => {
-  res.json({ userId: req.userId });
-});
-
-router.get("/bootstrap", controller.bootstrap);
+router.get("/bootstrap",controller.bootstrap);      // check if CF handle connected
+router.patch("/profile",controller.updateProfile);  // update name/email
+router.delete("/account",controller.deleteAccount); // delete account
 
 module.exports = router;
