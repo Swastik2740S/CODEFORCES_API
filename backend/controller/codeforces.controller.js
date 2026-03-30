@@ -126,7 +126,13 @@ exports.createSyncJob = async (req, res) => {
       ],
     });
 
-    res.status(201).json({ message: "Sync started" });
+    // Get the first job to return for polling
+    const firstJob = await prisma.syncJob.findFirst({
+      where: { handleId: activeHandle.id, status: "pending" },
+      orderBy: { id: "asc" },
+    });
+
+    res.status(201).json({ message: "Sync started", jobId: firstJob?.id });
   } catch (err) {
     console.error(err);
     res.status(401).json({ error: "Invalid or expired token" });

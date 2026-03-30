@@ -1,3 +1,4 @@
+require("dotenv").config();
 const prisma = require("../client");
 const cf = require("../services/codeforces.service");
 
