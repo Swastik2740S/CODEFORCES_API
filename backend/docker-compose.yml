@@ -13,11 +13,19 @@ services:
       - JWT_SECRET=${JWT_SECRET}
       - JWT_EXPIRES_IN=${JWT_EXPIRES_IN}
       - FRONTEND_URL=${FRONTEND_URL}
-      - NODE_ENV=development
+      - NODE_ENV=${NODE_ENV:-production}
     restart: unless-stopped
     command: sh -c "npx prisma migrate deploy && node server.js"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
   # ── Sync Worker ──────────────────────────────────────────────────────────────
+  # Talks only to the DB and the Codeforces API; the api service runs
+  # migrations first, so we still start after it.
   worker:
     build:
       context: .
@@ -25,7 +33,7 @@ services:
     container_name: cf_worker
     environment:
       - DATABASE_URL=${DATABASE_URL}
-      - NODE_ENV=development
+      - NODE_ENV=${NODE_ENV:-production}
     restart: unless-stopped
     depends_on:
       - api

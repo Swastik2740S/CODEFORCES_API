@@ -144,11 +144,15 @@ CODEFORCES_API/
 
 **Decoupled sync worker** — The sync worker runs as a completely separate Docker container from the API server. This means CF API calls never block HTTP requests. If CF is slow or down, your dashboard still loads from cached DB data instantly.
 
-**Job queue pattern** — Instead of calling CF directly on user request, the app creates `SyncJob` records in PostgreSQL. The worker polls every 2 seconds, picks up pending jobs, and processes them. This gives retry capability, status tracking, and prevents duplicate syncs.
+**Postgres-backed job queue** — Instead of calling CF directly on user request, the app creates `SyncJob` records in PostgreSQL. Workers claim jobs atomically with `FOR UPDATE SKIP LOCKED` (safe for any number of worker processes), honor per-job `priority` and `runAfter`, retry failures with quadratic backoff (up to `maxAttempts`), and a heartbeat-based sweep requeues jobs whose worker crashed mid-run. A partial unique index guarantees at most one active job per (handle, jobType), so concurrent triggers can't double-queue.
 
-**Caching everything** — All CF data (submissions, ratings, contests, problems) is stored in PostgreSQL after first sync. The dashboard reads entirely from the DB — no live CF API calls on page load. This means sub-100ms dashboard loads regardless of CF's availability.
+**Sync sessions** — A user-triggered sync groups its jobs (profile → ratings → submissions → activity → stats) under one `syncSessionId`. The frontend polls a single session endpoint and gets aggregate status, current stage, and a monotonic progress percentage.
 
-**Activity aggregation** — Raw submissions are stored first, then aggregated into daily `Activity` records as a separate job. This separation means the expensive grouping runs once in the background, not on every dashboard request.
+**Precomputed stats (`HandleStats`)** — After every submissions sync, a `stats` job aggregates everything the dashboard needs (verdicts, languages, difficulty distribution, tag mastery, attempts analysis, contest extremes) into a single JSON-backed row. Dashboard endpoints are single-row reads; nothing heavy runs on the request path.
+
+**One-request dashboard** — `GET /api/dashboard/overview` returns every dashboard section in one response. The frontend fetches it once and all components read their slice from a shared client-side store — one round trip instead of eleven.
+
+**Activity aggregation** — Raw submissions are stored first, then aggregated into daily `Activity` records as a separate job (rebuilt atomically in a transaction). The expensive grouping runs once in the background, not on every dashboard request.
 
 ---
 
@@ -169,9 +173,12 @@ In practice, CF's Cloudflare layer is even more aggressive — it fingerprints r
 
 **Rate limiter (`worker/rateLimiter.js`):**
 ```
-500ms minimum delay between requests = max 2 req/sec
+400ms minimum delay between requests = max 2.5 req/sec
 ```
-This is deliberately conservative — CF's stated limit is 5/sec but they start resetting connections at 3-4/sec on many IPs.
+This is deliberately conservative — CF's stated limit is 5/sec but they start resetting connections at 3-4/sec on many IPs. Callers are serialized on a promise chain, so even concurrent requests inside the process can't burst past the limit.
+
+**Incremental submission sync:**
+CF returns submissions newest-first, so the worker fetches pages from the top and stops as soon as an entire page is already in the database (nothing new, no verdict changed). A re-sync for an active user is usually **one API call** instead of a full history crawl. `submissions_full` jobs (`node trigger-sync.js --full`) still crawl everything to pick up old rejudges.
 
 **Exponential backoff in `codeforces.service.js`:**
 ```
@@ -185,11 +192,11 @@ Attempt 5 fails → mark job as failed
 **Small batch sizes for submissions:**
 The `user.status` endpoint (submissions) returns large JSON payloads. Requesting 1000 submissions at once (~2MB) causes CF to reset the connection. Batching at 200 per request keeps responses under ~400KB which transfers reliably.
 
-**Post-failure cooldown:**
-After any job failure, the worker waits 10 seconds before picking up the next job. This prevents rapid retry loops that would compound the rate limit problem.
+**Post-failure cooldown + retry backoff:**
+After any job failure, the worker waits 10 seconds before picking up the next job, and the failed job itself is requeued with quadratic backoff (1min → 4min → capped at 10min) until `maxAttempts` is exhausted. This prevents rapid retry loops that would compound the rate limit problem.
 
-**Idempotent upserts:**
-All DB writes use Prisma `upsert` — if a sync is interrupted and retried, no duplicate data is created.
+**Idempotent batched writes:**
+Submissions and rating changes are written with `createMany(..., skipDuplicates)` — two round trips per 200-submission page instead of 400 — and re-running an interrupted sync never creates duplicate data. Verdicts recorded while a submission was still judging are updated on the next sync.
 
 ---
 
@@ -323,9 +330,18 @@ NEXT_PUBLIC_URL=/api
 | POST | `/api/auth/logout` | Logout |
 | GET | `/api/auth/me` | Get current user |
 
+### Sync
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/codeforces/link-handle` | Verify and link a CF handle |
+| POST | `/api/codeforces/sync` | Start a sync session (409 returns the running session) |
+| GET | `/api/codeforces/sync/session/:sessionId` | Aggregate session progress (stage, %, records) |
+| GET | `/api/codeforces/sync/:jobId` | Single-job status (legacy) |
+
 ### Dashboard
 | Method | Endpoint | Description |
 |--------|----------|-------------|
+| GET | `/api/dashboard/overview` | **Everything below in one request** |
 | GET | `/api/dashboard/summary` | Rating, rank, problems solved |
 | GET | `/api/dashboard/activity` | Heatmap data (supports `?days=`) |
 | GET | `/api/dashboard/contests` | Recent contest history (supports `?limit=`) |
@@ -377,9 +393,9 @@ Ensure port `8080` is open in your EC2 Security Group inbound rules (Custom TCP,
 ## Known Limitations
 
 - **CF API blocks on some ISPs** — `user.status` endpoint may require a VPN for initial sync on Indian ISPs due to Cloudflare TLS fingerprinting
-- **Neon cold starts** — Free tier DB pauses after 5 min inactivity; first request after pause takes ~3s (handled gracefully by the worker)
+- **Neon cold starts** — Free tier DB pauses after 5 min inactivity; first request after pause takes ~3s (handled gracefully by the worker, which also backs off its polling to 15s when idle)
 - **No real-time sync** — Data refreshes only when a sync job is manually triggered or the user requests it
-- **Single worker** — Only one sync job runs at a time; multiple users syncing simultaneously queue up
+- **Single worker container** — One sync job runs at a time; multiple users syncing simultaneously queue up. Job claiming uses `FOR UPDATE SKIP LOCKED`, so adding worker containers (on separate IPs for CF rate-limit headroom) scales horizontally with no code changes
 
 ---
 
