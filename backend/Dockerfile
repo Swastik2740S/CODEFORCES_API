@@ -28,6 +28,12 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY --from=prisma /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=prisma /app/node_modules/@prisma ./node_modules/@prisma
 
+# Bake the pinned prisma CLI (devDependency) into the image so
+# "npx prisma migrate deploy" at startup resolves locally instead of
+# downloading whatever the latest major version is from the registry.
+COPY --from=prisma /app/node_modules/prisma ./node_modules/prisma
+COPY --from=prisma /app/node_modules/.bin ./node_modules/.bin
+
 # Copy app source
 COPY . .
 

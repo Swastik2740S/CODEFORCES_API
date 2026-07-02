@@ -418,11 +418,18 @@ async function runWorker() {
     }
 
     // Neon free tier pauses after inactivity; a claim during wake-up throws.
+    // On a fresh deploy this also covers the window where the api container
+    // is still running `prisma migrate deploy` (new columns don't exist yet).
     let job;
     try {
       job = await claimNextJob();
     } catch (dbErr) {
-      console.warn(`⚠️  DB unreachable (waking up?): ${dbErr.message}`);
+      const migrating = /does not exist/i.test(dbErr.message);
+      console.warn(
+        migrating
+          ? "⏳ Schema not ready (migrations still applying?) — retrying in 5s"
+          : `⚠️  DB unreachable (waking up?): ${dbErr.message}`
+      );
       await sleep(5000);
       continue;
     }
