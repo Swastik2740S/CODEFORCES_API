@@ -1,44 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
+import useOverview, { refreshOverview } from "./useOverview";
 
 export default function useSummary(refreshKey = 0) {
-  const API_BASE = process.env.NEXT_PUBLIC_URL;
+  const { data, loading } = useOverview();
 
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-
+  // Bumped by the header after a sync completes — reload the shared overview
+  // so every dashboard section refreshes, not just the summary cards.
   useEffect(() => {
-    let alive = true;
+    if (refreshKey > 0) refreshOverview();
+  }, [refreshKey]);
 
-    async function load() {
-      setLoading(true);
-      try {
-        const res = await fetch(`${API_BASE}/dashboard/summary`, {
-          credentials: "include",
-          cache: "no-store",
-        });
-
-        const json = await res.json();
-
-        if (alive) {
-          setData(json);
-        }
-      } catch (err) {
-        console.error("Failed to load dashboard summary", err);
-      } finally {
-        if (alive) {
-          setLoading(false);
-        }
-      }
-    }
-
-    load();
-
-    return () => {
-      alive = false; 
-    };
-  }, [refreshKey]); 
-
-  return { data, loading };
+  return { data: data?.summary ?? null, loading };
 }

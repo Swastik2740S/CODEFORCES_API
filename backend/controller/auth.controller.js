@@ -11,12 +11,15 @@ const COOKIE_OPTIONS = {
   secure: isProd,
 };
 
+// Never send the passwordHash back to the client.
+const safeUser = (u) => ({ id: u.id, email: u.email, createdAt: u.createdAt });
+
 exports.register = async (req, res) => {
   try {
     const { email, password } = req.body;
     const { user, token } = await authService.register(email, password);
     res.cookie('access_token', token, COOKIE_OPTIONS);
-    res.status(201).json({ user });
+    res.status(201).json({ user: safeUser(user) });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -27,7 +30,7 @@ exports.login = async (req, res) => {
     const { email, password } = req.body;
     const { user, token } = await authService.login(email, password);
     res.cookie('access_token', token, COOKIE_OPTIONS);
-    res.json({ user });
+    res.json({ user: safeUser(user) });
   } catch (err) {
     res.status(401).json({ error: err.message });
   }

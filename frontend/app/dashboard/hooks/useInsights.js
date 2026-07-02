@@ -1,46 +1,40 @@
 "use client";
-import { useState, useEffect } from "react";
 
-const API_BASE = process.env.NEXT_PUBLIC_URL;
+import useOverview from "./useOverview";
 
-function useInsight(endpoint, params = "") {
-  const [data, setData]       = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState(null);
+// All insight hooks read their slice from the single shared /overview fetch —
+// same return shapes as before, but the dashboard makes one request, not eight.
 
-  useEffect(() => {
-    const url = `${API_BASE}/dashboard/${endpoint}${params ? `?${params}` : ""}`;
-    setLoading(true);
-    fetch(url, { credentials: "include" })
-      .then((r) => { if (!r.ok) throw new Error("Failed"); return r.json(); })
-      .then((d) => { setData(d); setLoading(false); })
-      .catch((e) => { setError(e.message); setLoading(false); });
-  }, [endpoint, params]);
-
-  return { data, loading, error };
+function useSlice(pick) {
+  const { data, loading, error } = useOverview();
+  return { data: data ? pick(data) : null, loading, error };
 }
 
 export function useContests(limit = 20) {
-  return useInsight("contests", `limit=${limit}`);
+  const { data, loading, error } = useOverview();
+  if (!data) return { data: null, loading, error };
+  const contests = (data.contests?.contests ?? []).slice(0, limit);
+  return { data: { contests, total: contests.length }, loading, error };
 }
+
 export function useRatingHistory() {
-  return useInsight("rating-history");
+  return useSlice((d) => d.ratingHistory);
 }
 export function useVerdictStats() {
-  return useInsight("verdict-stats");
+  return useSlice((d) => d.verdictStats);
 }
 export function useLanguageStats() {
-  return useInsight("language-stats");
+  return useSlice((d) => d.languageStats);
 }
 export function useDifficultyStats() {
-  return useInsight("difficulty-stats");
+  return useSlice((d) => d.difficultyStats);
 }
 export function useAttemptsStats() {
-  return useInsight("attempts-stats");
+  return useSlice((d) => d.attemptsStats);
 }
 export function useTagMastery() {
-  return useInsight("tag-mastery");
+  return useSlice((d) => d.tagMastery);
 }
 export function useContestExtremes() {
-  return useInsight("contest-extremes");
+  return useSlice((d) => d.contestExtremes);
 }

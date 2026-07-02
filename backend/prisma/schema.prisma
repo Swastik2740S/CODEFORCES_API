@@ -51,7 +51,8 @@ model CodeforcesHandle {
   contestParticipations ContestParticipation[]
   ratings           RatingChange[]
   syncJobs          SyncJob[]
-  
+  stats             HandleStats?
+
   @@index([userId])
   @@index([handle])
 }
@@ -213,6 +214,7 @@ model Submission {
   lastSyncedAt          DateTime @default(now())
   
   @@index([handleId])
+  @@index([handleId, verdict])
   @@index([problemId])
   @@index([verdict])
   @@index([creationTime])
@@ -266,23 +268,60 @@ model Activity {
 model SyncJob {
   id               String   @id @default(cuid())
 
-  jobType          String   // codeforces_sync, submissions_sync, etc.
+  jobType          String   // profile, ratings, submissions, submissions_full, activity, stats
   status           String   // pending, running, completed, failed
 
-  startedAt        DateTime @default(now())
+  // Queue mechanics
+  priority         Int      @default(0)   // higher = claimed sooner
+  attempts         Int      @default(0)
+  maxAttempts      Int      @default(3)
+  runAfter         DateTime @default(now()) // job is claimable only after this time (retry backoff)
+  syncSessionId    String?  // groups the jobs created by one user-triggered sync
+
+  createdAt        DateTime @default(now())
+  startedAt        DateTime?              // set when a worker actually claims the job
+  heartbeatAt      DateTime?              // updated during long jobs; stuck-job recovery keys off this
   completedAt      DateTime?
 
   errorMessage     String?
   recordsProcessed Int?
 
-  // 🔑 RELATION (THIS FIXES YOUR ERROR)
   handleId         String?
   handle           CodeforcesHandle? @relation(fields: [handleId], references: [id], onDelete: Cascade)
 
+  @@index([status, runAfter, priority])
+  @@index([syncSessionId])
   @@index([jobType])
-  @@index([status])
-  @@index([startedAt])
   @@index([handleId])
+}
+
+// Precomputed per-handle dashboard statistics.
+// Written by the worker's "stats" job after every submissions sync, so
+// dashboard reads are single-row lookups instead of full-table aggregations.
+model HandleStats {
+  id                 String   @id @default(cuid())
+  handleId           String   @unique
+  handle             CodeforcesHandle @relation(fields: [handleId], references: [id], onDelete: Cascade)
+
+  totalSubmissions   Int      @default(0)
+  problemsAttempted  Int      @default(0)
+  problemsSolved     Int      @default(0)
+  acceptanceRate     Int      @default(0) // % of submissions with verdict OK
+  overallAccRate     Int      @default(0) // % of attempted problems eventually solved
+  avgAttemptsToSolve Float    @default(0)
+  firstTrySolves     Int      @default(0)
+  firstTryRate       Int      @default(0)
+
+  hardestSolved      Json?    // { name, rating, attempts }
+  hardestUnsolved    Json?    // { name, rating, attempts }
+  verdictCounts      Json?    // [{ verdict, count, percentage }]
+  languageCounts     Json?    // [{ language, count, percentage }]
+  difficultyDist     Json?    // [{ rating, count }]
+  focusAreas         Json?    // [{ label, value }] — top 6 tags by share of solved
+  tagMastery         Json?    // [{ tag, attempted, solved, successRate, avgDifficulty, maxDifficulty }]
+  contestStats       Json?    // { totalContests, currentStreak, bestStreak, extremes }
+
+  updatedAt          DateTime @updatedAt
 }
 
 

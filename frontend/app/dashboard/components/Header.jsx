@@ -24,7 +24,18 @@ export default function Header({ username, onSyncComplete }) {
         credentials: "include",
       });
 
-      if (!res.ok) throw new Error();
+      const data = await res.json().catch(() => ({}));
+
+      // 409 means a sync is already in flight — resume polling its session.
+      if (!res.ok && !(res.status === 409 && data.sessionId)) throw new Error();
+
+      const sessionId = data.sessionId;
+      if (!sessionId) throw new Error();
+
+      // Poll until the whole session (profile → ratings → submissions →
+      // activity → stats) is done, so the refreshed dashboard has real data.
+      const done = await pollSession(sessionId);
+      if (!done) throw new Error();
 
       onSyncComplete?.();
       setLastUpdated("Synced just now");
@@ -33,6 +44,27 @@ export default function Header({ username, onSyncComplete }) {
     } finally {
       setSyncing(false);
     }
+  }
+
+  async function pollSession(sessionId) {
+    const POLL_MS = 2000;
+    const MAX_POLLS = 300; // ~10 min safety cap for very large first syncs
+
+    for (let i = 0; i < MAX_POLLS; i++) {
+      await new Promise((r) => setTimeout(r, POLL_MS));
+
+      const res = await fetch(`${API_BASE}/codeforces/sync/session/${sessionId}`, {
+        credentials: "include",
+      });
+      if (!res.ok) return false;
+
+      const session = await res.json();
+      if (session.status === "completed") return true;
+      if (session.status === "failed") return false;
+
+      setLastUpdated(`Syncing… ${session.progress ?? 0}%`);
+    }
+    return false;
   }
 
   async function handleLogout() {
