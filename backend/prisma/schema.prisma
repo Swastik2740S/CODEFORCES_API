@@ -19,15 +19,19 @@ model User {
 
   codeforcesHandles CodeforcesHandle[]
   preferences       UserPreferences?
+  friends           Friend[]
 }
 
 
-// Codeforces Handle (supports multiple handles per user)
+// Codeforces Handle (supports multiple handles per user).
+// userId is optional: rows with no user are "shadow handles" — public CF
+// profiles synced on demand for the Peers comparison page. They flow through
+// the same job queue and HandleStats pipeline as owned handles.
 model CodeforcesHandle {
   id                String   @id @default(cuid())
   handle            String   @unique
-  userId            String
-  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId            String?
+  user              User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
   
   // Basic CF data
   rating            Int?
@@ -52,9 +56,26 @@ model CodeforcesHandle {
   ratings           RatingChange[]
   syncJobs          SyncJob[]
   stats             HandleStats?
+  followers         Friend[]
 
   @@index([userId])
   @@index([handle])
+}
+
+// Friends: CF handles a user follows on the Peers page. The target can be a
+// shadow handle or another user's handle — following is one-directional and
+// only references public CF data.
+model Friend {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  handleId  String
+  handle    CodeforcesHandle @relation(fields: [handleId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, handleId])
+  @@index([userId])
+  @@index([handleId])
 }
 
 // User Preferences

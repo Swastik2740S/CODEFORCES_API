@@ -88,3 +88,6 @@ exports.getUserRating = (handle) =>
 
 exports.getUserSubmissions = (handle, from = 1, count = 200) =>
   cfRequest("user.status", { handle, from, count });
+
+exports.getContestList = (gym = false) =>
+  cfRequest("contest.list", { gym });

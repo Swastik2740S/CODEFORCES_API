@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { motion } from "framer-motion";
-import Sidebar from "./components/Sidebar";
+import Sidebar from "../components/Sidebar";
 import Header from "./components/Header";
 import StatCard from "./components/StatCard";
 import RatingChart from "./components/RatingChart";

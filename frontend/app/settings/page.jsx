@@ -6,7 +6,7 @@ import {
   User, Lock, Code2, Trash2, Check,
   Eye, EyeOff, Plus, RefreshCw, AlertCircle
 } from "lucide-react";
-import Sidebar from "../dashboard/components/Sidebar";
+import Sidebar from "../components/Sidebar";
 
 const API = "/api";
 
