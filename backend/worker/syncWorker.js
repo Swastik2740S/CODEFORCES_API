@@ -9,6 +9,8 @@ const POLL_MAX_MS = 15000;       // poll interval after a long idle stretch
 const FAILURE_COOLDOWN_MS = 10000; // circuit-breaker pause after any job failure
 const RECOVERY_EVERY_MS = 60000; // how often to sweep for stuck jobs
 const STALE_RUNNING_MIN = 5;     // running job with no heartbeat for this long = stuck
+const SHADOW_SWEEP_EVERY_MS = 6 * 60 * 60 * 1000; // stale shadow-handle sweep cadence
+const SHADOW_MAX_AGE_DAYS = 30;  // unfollowed shadow handles idle this long get deleted
 const SUB_BATCH_SIZE = 200;      // CF user.status page size (larger payloads get reset)
 const SUB_BATCH_DELAY_MS = 1200; // pause between submission pages
 
@@ -60,6 +62,26 @@ async function recoverStuckJobs() {
   `;
   if (failed > 0 || requeued > 0) {
     console.log(`🔧 Stuck-job sweep: ${requeued} requeued, ${failed} failed permanently`);
+  }
+}
+
+// Shadow handles (userId NULL) that nobody follows and nobody has compared in
+// SHADOW_MAX_AGE_DAYS are dead weight — every compare re-syncs its peer, so
+// lastSyncedAt is a good "last used" proxy. Cascade cleans submissions,
+// ratings, activity, stats and sync jobs.
+async function cleanupShadowHandles() {
+  const deleted = await prisma.$executeRaw`
+    DELETE FROM "CodeforcesHandle" h
+    WHERE h."userId" IS NULL
+      AND h."lastSyncedAt" < NOW() - INTERVAL '1 day' * ${SHADOW_MAX_AGE_DAYS}
+      AND NOT EXISTS (SELECT 1 FROM "Friend" f WHERE f."handleId" = h.id)
+      AND NOT EXISTS (
+        SELECT 1 FROM "SyncJob" j
+        WHERE j."handleId" = h.id AND j.status IN ('pending', 'running')
+      )
+  `;
+  if (deleted > 0) {
+    console.log(`🧹 Shadow-handle sweep: ${deleted} stale handles removed`);
   }
 }
 
@@ -405,6 +427,7 @@ async function runWorker() {
 
   let idleDelay = POLL_MIN_MS;
   let lastRecovery = 0;
+  let lastShadowSweep = 0;
 
   while (!shuttingDown) {
     // Stuck-job sweep (also runs once at startup)
@@ -414,6 +437,16 @@ async function runWorker() {
         await recoverStuckJobs();
       } catch (err) {
         console.warn(`⚠️  Stuck-job sweep failed: ${err.message}`);
+      }
+    }
+
+    // Stale shadow-handle sweep (also runs once at startup)
+    if (Date.now() - lastShadowSweep > SHADOW_SWEEP_EVERY_MS) {
+      lastShadowSweep = Date.now();
+      try {
+        await cleanupShadowHandles();
+      } catch (err) {
+        console.warn(`⚠️  Shadow-handle sweep failed: ${err.message}`);
       }
     }
 

@@ -178,7 +178,12 @@ exports.getSyncSessionStatus = async (req, res) => {
       orderBy: { createdAt: "asc" },
     });
 
-    if (jobs.length === 0 || jobs.some((j) => j.handle?.userId !== req.userId)) {
+    // Shadow-handle (peer) sessions have no owner — any authenticated user may
+    // poll them. Sessions for another user's OWN handle stay hidden.
+    const foreign = jobs.some(
+      (j) => j.handle?.userId != null && j.handle.userId !== req.userId
+    );
+    if (jobs.length === 0 || foreign) {
       return res.status(404).json({ error: "Sync session not found" });
     }
 

@@ -30,5 +30,8 @@ app.use('/api/auth',       require('./routes/auth.routes'));
 app.use('/api/user',       require('./routes/user.routes'));
 app.use('/api/codeforces', require('./routes/codeforces.routes'));
 app.use('/api/dashboard',  require('./routes/dashboard.routes'));
+app.use('/api/peers',      require('./routes/peers.routes'));
+app.use('/api/problems',   require('./routes/problems.routes'));
+app.use('/api/contests',   require('./routes/contests.routes'));
 
 module.exports = app;
