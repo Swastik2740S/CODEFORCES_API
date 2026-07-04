@@ -1,46 +1,310 @@
 # Codeforces Analytics Dashboard
 
-A full-stack competitive programming analytics platform that tracks your Codeforces performance, visualizes rating history, submission patterns, and provides deep insights into your problem-solving habits.
+A full-stack analytics platform that turns a competitive programmer's raw
+Codeforces history into fast, interactive insights — rating progression,
+activity heatmaps, verdict and language breakdowns, tag mastery, difficulty
+distribution, contest performance, and head-to-head peer comparison.
+
+The hard part isn't the charts. It's ingesting user data reliably from an API
+that is **strictly rate-limited (~5 req/sec per IP) and fronted by Cloudflare**.
+This project solves that with a **decoupled sync-worker architecture** and a
+**PostgreSQL-backed job queue**, so the dashboard always serves pre-computed
+data in milliseconds regardless of Codeforces' availability.
+
+<p>
+  <img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-green.svg" />
+  <img alt="Node" src="https://img.shields.io/badge/Node-22-brightgreen.svg" />
+  <img alt="Next.js" src="https://img.shields.io/badge/Next.js-16-black.svg" />
+  <img alt="PostgreSQL" src="https://img.shields.io/badge/PostgreSQL-Prisma-blue.svg" />
+</p>
+
+---
+
+## Table of Contents
+
+- [Features](#features)
+- [Architecture](#architecture)
+- [The Core Problem: Codeforces Rate Limiting](#the-core-problem-codeforces-rate-limiting)
+- [Tech Stack](#tech-stack)
+- [Data Model](#data-model)
+- [The Sync Pipeline](#the-sync-pipeline)
+- [API Reference](#api-reference)
+- [Project Structure](#project-structure)
+- [Getting Started](#getting-started)
+- [Environment Variables](#environment-variables)
+- [Deployment](#deployment)
+- [Scaling & Capacity](#scaling--capacity)
+- [Known Limitations](#known-limitations)
+- [Roadmap](#roadmap)
+- [Authors](#authors)
+- [License](#license)
 
 ---
 
 ## Features
 
-- **Authentication** — Register and login with JWT-based auth via secure HTTP-only cookies
-- **Codeforces Handle Sync** — Connect your CF handle and sync all data automatically
-- **Activity Heatmap** — GitHub-style contribution heatmap showing daily submissions
-- **Rating Progression** — Interactive area chart with CF rank threshold lines
-- **Contest History** — Full contest history with rank and rating change per contest
-- **Contest Extremes** — Best/worst rank, biggest gain/drop, win/loss streaks
-- **Verdict Breakdown** — Donut chart showing AC, WA, TLE, RE distribution
-- **Language Stats** — Animated bar chart of programming language usage
-- **Difficulty Distribution** — Problems solved bucketed by CF rating (800–3500)
-- **Tag Mastery** — Per-tag stats: solved, attempted, success rate, avg difficulty
-- **Attempts Analysis** — Acceptance rate, avg attempts to solve, hardest solved problem
-- **Background Sync Worker** — Continuous data sync respecting CF API rate limits
+- **Account & handle management** — email/password auth (JWT in HTTP-only
+  cookies), link/switch multiple Codeforces handles per account.
+- **Rich dashboard** — a single `/overview` call returns pre-aggregated:
+  - Rating progression chart with rank thresholds
+  - GitHub-style activity heatmap (daily solves / submissions / contests)
+  - Verdict, language, and difficulty distributions
+  - Tag mastery (success rate & avg difficulty per topic)
+  - Attempt efficiency (first-try rate, avg attempts to solve, hardest solved/unsolved)
+  - Contest history, streaks, and rating extremes
+- **Peers** — compare yourself against *any* public Codeforces handle
+  (rating overlay, tag-by-tag comparison, common contests, a "practice these"
+  list of problems your peer solved that you haven't), plus a followed-peers
+  leaderboard.
+- **Problems browser** — filter the cached Codeforces problemset by rating and tags.
+- **Contests** — upcoming and past contest listings.
+- **Sub-second reads** — every dashboard widget reads a pre-computed row, not a
+  live aggregation. Typical initial load is well under 200 ms.
+
+---
+
+## Architecture
+
+The system is split into **three independently deployable services** plus a
+managed Postgres database. The design principle is a hard separation between
+**data ingestion** (slow, rate-limited, failure-prone) and **data presentation**
+(fast, read-only, always available).
+
+```
+                        ┌──────────────────────────────┐
+                        │        Codeforces API         │
+                        │  (~5 req/s per IP, Cloudflare) │
+                        └───────────────┬───────────────┘
+                                        │  native fetch + throttle
+                                        │  (only the worker calls CF)
+                                        ▼
+  ┌──────────────┐   HTTP    ┌────────────────┐   poll / claim ┌──────────────┐
+  │   Frontend   │  /api/*   │   Express API  │◄──────────────►│  Sync Worker │
+  │  (Next.js)   │─────────► │   (stateless)  │   job queue    │  (headless)  │
+  │  proxy pass  │           │  reads pre-agg │                │  writes data │
+  └──────────────┘           └───────┬────────┘                └──────┬───────┘
+                                     │                                 │
+                                     │        ┌──────────────┐         │
+                                     └───────►│  PostgreSQL  │◄────────┘
+                                              │    (Neon)    │
+                                              │ SyncJob queue│
+                                              │  HandleStats │
+                                              └──────────────┘
+```
+
+**Why three services?**
+
+| Service | Role | Talks to Codeforces? | Scales by |
+| :--- | :--- | :--- | :--- |
+| **Frontend** (Next.js) | UI + proxy `/api/*` → backend | No | CDN / more replicas |
+| **API** (Express) | Auth, reads pre-aggregated data, enqueues jobs | Only 1 call (handle verification) | Stateless horizontal replicas |
+| **Worker** (Node) | Polls the queue, calls Codeforces, writes & aggregates | **Yes — the only CF caller** | More workers, each on a **distinct IP** |
+| **PostgreSQL** | Source of truth + durable job queue | No | Read replicas / partitioning |
+
+If the worker crashes or Codeforces goes down, the website stays fully
+functional — it just serves the last-synced data.
+
+### Architecture decisions
+
+- **Decoupled sync worker** — runs as a separate container from the API, so CF
+  calls never block HTTP requests. If CF is slow or down, the dashboard still
+  loads from the DB instantly.
+- **Postgres-backed job queue** — user requests create `SyncJob` rows instead of
+  calling CF directly. Workers claim jobs atomically with `FOR UPDATE SKIP
+  LOCKED` (safe for any number of workers), honor `priority`/`runAfter`, retry
+  with quadratic backoff, and a heartbeat sweep requeues jobs whose worker died.
+- **Sync sessions** — a user-triggered sync groups its jobs under one
+  `syncSessionId`; the frontend polls one endpoint for aggregate progress.
+- **Pre-computed stats (`HandleStats`)** — all heavy aggregation runs in the
+  worker after a sync and lands in one row per handle, so dashboard endpoints
+  are single-row reads.
+- **One-request dashboard** — `GET /api/dashboard/overview` returns every
+  section in a single response; the client fetches once and each widget reads
+  its slice.
+
+---
+
+## The Core Problem: Codeforces Rate Limiting
+
+> **This is the single most important design constraint in the project, and the
+> hard ceiling on how far it can scale.**
+
+Codeforces exposes a public API but enforces:
+
+1. **A per-IP rate limit** of roughly **5 requests/second**, with Cloudflare
+   dropping connections well below that on many networks. Exceeding it yields
+   `ECONNRESET` (dropped mid-response), `HTTP 503` (temporary IP ban), or
+   `HTTP 429`.
+2. **Cloudflare TLS fingerprinting** — older HTTP libraries (Axios, Request) get
+   `403`/`503` because their TLS signature doesn't look like a browser.
+
+Our mitigations:
+
+- **Single, serialized rate limiter** (`worker/rateLimiter.js`) — all CF calls
+  are chained through one promise at **~2.5 req/s** (a `400 ms` floor), staying
+  safely under the limit. Concurrent callers queue rather than burst.
+- **Native `fetch` (Node 22 / Undici)** — carries a modern-client TLS signature
+  Cloudflare accepts, with a browser `User-Agent`. In testing this eliminated
+  the connection resets seen with older libraries.
+- **Sequential batching** — submissions are fetched in pages of 200 with a
+  `1200 ms` pause between pages, keeping payloads small and avoiding TCP resets.
+- **Exponential backoff** — transient `429`/`503`/network errors retry with
+  increasing delays (`2s → 4s → 8s → 15s`); the job then requeues with quadratic
+  backoff (`1min → 4min → capped 10min`) until `maxAttempts` is exhausted.
+- **Only the worker talks to Codeforces.** The API process makes exactly one CF
+  call ever — verifying a handle exists when a user links it.
+
+The practical consequence: **the entire product shares one Codeforces API
+budget.** No amount of application compute changes that — see
+[Scaling & Capacity](#scaling--capacity).
 
 ---
 
 ## Tech Stack
 
 **Frontend**
-- Next.js 16 (App Router)
+- Next.js 16 (App Router) + React 19
 - Tailwind CSS v4
-- Recharts (data visualization)
-- Framer Motion (animations)
-- Lucide React (icons)
+- Recharts (charts), Framer Motion (animation), lucide-react (icons)
 
 **Backend**
-- Node.js + Express.js v5
-- PostgreSQL (Neon serverless)
-- Prisma ORM
-- JWT authentication
-- Native fetch for CF API requests
+- Node.js 22 + Express 5
+- Prisma ORM 6
+- JWT (`jsonwebtoken`) + bcrypt (`bcryptjs`) for auth
+- Native `fetch` for Codeforces calls
 
 **Infrastructure**
-- Docker + Docker Compose
-- AWS EC2 (backend deployment)
-- Next.js rewrites (API proxy)
+- PostgreSQL (Neon serverless in production)
+- Docker + Docker Compose (API + worker)
+- AWS EC2 (backend), Next.js rewrites (API proxy)
+
+---
+
+## Data Model
+
+Prisma schema (`backend/prisma/schema.prisma`). Key entities:
+
+| Model | Purpose |
+| :--- | :--- |
+| `User` | Account (email, password hash, preferences). |
+| `CodeforcesHandle` | A CF handle. `userId` may be **null** for *shadow handles* — public profiles synced on-demand for peer comparison. |
+| `Friend` | A handle a user follows on the Peers page (one-directional). |
+| `Submission` | Raw submissions (verdict, language, problem, timing). Idempotent on `submissionId`. |
+| `RatingChange` | Per-contest rating deltas (immutable, insert-only). |
+| `ContestParticipation` | A handle's result in a contest. |
+| `Problem` / `Contest` / `ContestProblem` | Cached Codeforces problemset & contest metadata. |
+| `Activity` | Pre-aggregated daily counts powering the heatmap. |
+| **`HandleStats`** | **Pre-computed dashboard statistics** — one row per handle. This is what makes reads fast. |
+| **`SyncJob`** | **The durable job queue.** State machine: `pending → running → completed/failed`, with priority, attempts, backoff, and heartbeats. |
+| `RateLimitTracker` | Windowed counters (also used for the per-user daily new-peer budget). |
+
+The design trade-off is deliberate: **write-time work is expensive, read-time
+work is trivial.** The worker does all aggregation and writes it to
+`HandleStats` / `Activity`; the API just reads single rows.
+
+---
+
+## The Sync Pipeline
+
+A user-triggered sync creates a **session** of jobs under one `syncSessionId`:
+
+```
+profile → ratings → submissions → (auto) activity → (auto) stats
+```
+
+How it works (`backend/worker/syncWorker.js`):
+
+1. **Enqueue** — the API inserts `profile`, `ratings`, `submissions` jobs at
+   high priority (user is watching a progress bar). A partial unique index on
+   `(handleId, jobType)` for active jobs makes double-queuing impossible.
+2. **Claim** — the worker atomically claims the next runnable job with
+   `UPDATE ... FOR UPDATE SKIP LOCKED`, which is **safe for any number of
+   worker processes** — no job is ever processed twice.
+3. **Process:**
+   - `profile` — one `user.info` call.
+   - `ratings` — `user.rating`, insert-only (immutable).
+   - `submissions` — pages of 200, newest-first. An **incremental** re-sync
+     stops as soon as a whole page is already known, so a returning active user
+     usually costs a *single* API call. `submissions_full` crawls all history to
+     pick up old rejudged verdicts.
+4. **Aggregate** — after submissions land, the worker auto-enqueues `activity`
+   (rebuilds the heatmap atomically) and `stats` (recomputes `HandleStats`).
+   These are **DB-only, zero CF calls.**
+5. **Resilience** — heartbeats mark long-running jobs; a stuck-job sweep
+   requeues anything whose worker died. Failures cool down 10s and retry with
+   backoff. Stale unfollowed shadow handles are garbage-collected after 30 days.
+
+Peer comparisons flow through the *same* queue at **lower priority (0 vs 10)**,
+so real users' syncs always win the shared rate-limit budget.
+
+---
+
+## API Reference
+
+All routes are proxied by the frontend under `/api/*`. Auth is via an HTTP-only
+`token` cookie; protected routes require it.
+
+### Auth — `/api/auth`
+| Method | Path | Description |
+| :--- | :--- | :--- |
+| `POST` | `/register` | Create account |
+| `POST` | `/login` | Log in, set cookie |
+| `POST` | `/logout` | Clear cookie |
+| `GET` | `/me` | Current user |
+| `PATCH` | `/change-password` | Change password |
+
+### User — `/api/user`
+| Method | Path | Description |
+| :--- | :--- | :--- |
+| `GET` | `/bootstrap` | Whether a CF handle is connected |
+| `PATCH` | `/profile` | Update name/email |
+| `DELETE` | `/account` | Delete account |
+
+### Codeforces / Sync — `/api/codeforces`
+| Method | Path | Description |
+| :--- | :--- | :--- |
+| `POST` | `/link-handle` | Verify & link a CF handle |
+| `GET` | `/handles` | List linked handles |
+| `POST` | `/sync` | Start a sync session (409 returns the running session) |
+| `GET` | `/sync/session/:sessionId` | Aggregate session progress |
+| `GET` | `/sync/:jobId` | Single-job status (legacy) |
+| `GET` | `/rating-graph` | Rating points for charts |
+| `PATCH` | `/handle/:id/activate` | Switch active handle |
+| `DELETE` | `/handle/:id` | Remove a handle |
+
+### Dashboard (read-only, pre-aggregated) — `/api/dashboard`
+| Method | Path | Description |
+| :--- | :--- | :--- |
+| `GET` | `/overview` | **Everything in one call** |
+| `GET` | `/summary` | Rating, rank, problems solved |
+| `GET` | `/activity` | Heatmap data (`?days=`) |
+| `GET` | `/contests` | Recent contest history (`?limit=`) |
+| `GET` | `/rating-history` | Full rating progression |
+| `GET` | `/verdict-stats` | Verdict breakdown |
+| `GET` | `/language-stats` | Language usage |
+| `GET` | `/difficulty-stats` | Problems by rating bucket |
+| `GET` | `/attempts-stats` | Acceptance rate + attempt stats |
+| `GET` | `/tag-mastery` | Per-tag performance |
+| `GET` | `/contest-extremes` | Best/worst contest stats |
+| `GET` | `/focus-areas` | Top tags by solve share |
+
+### Peers — `/api/peers`
+| Method | Path | Description |
+| :--- | :--- | :--- |
+| `GET` | `/` | Followed peers |
+| `GET` | `/leaderboard` | Leaderboard of followed peers |
+| `POST` | `/:handle/follow` | Follow a handle |
+| `DELETE` | `/:handle` | Unfollow |
+| `POST` | `/:handle/sync` | Sync a peer (shadow handle) |
+| `GET` | `/compare/:handle` | Head-to-head comparison |
+
+### Problems & Contests
+| Method | Path | Description |
+| :--- | :--- | :--- |
+| `GET` | `/api/problems` | Filter problemset (rating, tags) |
+| `GET` | `/api/problems/tags` | Available tags |
+| `GET` | `/api/contests/upcoming` | Upcoming contests |
+| `GET` | `/api/contests/history` | Past contests |
 
 ---
 
@@ -49,198 +313,36 @@ A full-stack competitive programming analytics platform that tracks your Codefor
 ```
 CODEFORCES_API/
 ├── backend/
-│   ├── controller/
-│   │   ├── auth.controller.js
-│   │   ├── dashboard.controller.js
-│   │   ├── codeforces.controller.js
-│   │   └── user.controller.js
-│   ├── middleware/
-│   │   └── auth.middleware.js
-│   ├── routes/
-│   │   ├── auth.routes.js
-│   │   ├── dashboard.routes.js
-│   │   ├── codeforces.routes.js
-│   │   └── user.routes.js
+│   ├── app.js                 # Express app: CORS, routes, /health
+│   ├── server.js              # API entrypoint (port 8080)
+│   ├── client.js              # Prisma client singleton
+│   ├── routes/                # auth, user, codeforces, dashboard, peers,
+│   │                          #   problems, contests
+│   ├── controller/            # Request handlers (one per route group)
 │   ├── services/
-│   │   ├── auth.service.js
-│   │   └── codeforces.service.js
+│   │   ├── codeforces.service.js  # CF API client (fetch + retry)
+│   │   ├── stats.service.js       # HandleStats computation
+│   │   └── auth.service.js
 │   ├── worker/
-│   │   ├── syncWorker.js
-│   │   └── rateLimiter.js
-│   ├── prisma/
-│   │   ├── schema.prisma
-│   │   └── migrations/
-│   ├── utils/
-│   │   └── jwt.js
-│   ├── client.js
-│   ├── app.js
-│   ├── server.js
-│   ├── Dockerfile
-│   ├── Dockerfile.worker
-│   ├── docker-compose.yml
-│   └── .dockerignore
-│
+│   │   ├── syncWorker.js      # The job-queue worker (the "heart")
+│   │   └── rateLimiter.js     # Serialized ~2.5 req/s throttle
+│   ├── middleware/            # auth.middleware.js (JWT)
+│   ├── utils/                 # hash.js, jwt.js
+│   ├── prisma/schema.prisma   # Data model
+│   ├── Dockerfile             # API image
+│   ├── Dockerfile.worker      # Worker image
+│   └── docker-compose.yml     # API + worker services
 └── frontend/
     ├── app/
-    │   ├── auth/
-    │   │   └── page.jsx
-    │   ├── connect-codeforces/
-    │   │   └── page.jsx
-    │   └── dashboard/
-    │       ├── components/
-    │       │   ├── ActivityHeatmap.jsx
-    │       │   ├── AttemptsStats.jsx
-    │       │   ├── ContestExtremes.jsx
-    │       │   ├── ContestHistory.jsx
-    │       │   ├── DifficultyStats.jsx
-    │       │   ├── FocusAreas.jsx
-    │       │   ├── Header.jsx
-    │       │   ├── LanguageStats.jsx
-    │       │   ├── RatingChart.jsx
-    │       │   ├── RatingHistoryChart.jsx
-    │       │   ├── Sidebar.jsx
-    │       │   ├── StatCard.jsx
-    │       │   ├── TagMastery.jsx
-    │       │   └── VerdictStats.jsx
-    │       ├── hooks/
-    │       │   ├── useActivity.js
-    │       │   ├── useInsights.js
-    │       │   └── useSummary.js
-    │       └── page.jsx
-    ├── middleware.ts
-    ├── next.config.mjs
-    └── .env
+    │   ├── auth/ connect-codeforces/ dashboard/ peers/ problems/
+    │   │   contests/ settings/          # App Router pages
+    │   ├── dashboard/components/         # Charts & widgets
+    │   ├── dashboard/hooks/              # useOverview, useInsights, …
+    │   ├── peers/components/             # Compare flow, overlays, leaderboard
+    │   ├── components/Sidebar.jsx        # Shared nav
+    │   └── lib/cf.js                     # API client helpers
+    └── next.config.mjs        # /api/* → backend rewrite (proxy)
 ```
-
----
-
-## System Design
-
-```
-┌─────────────────┐         ┌──────────────────────────────────┐
-│   Next.js       │         │         AWS EC2                   │
-│   Frontend      │         │  ┌────────────┐  ┌────────────┐  │
-│   (localhost/   │─────────▶  │  cf_api    │  │ cf_worker  │  │
-│    Vercel)      │  proxy  │  │ Express    │  │ SyncWorker │  │
-│                 │         │  │ :8080      │  │            │  │
-└─────────────────┘         │  └─────┬──────┘  └─────┬──────┘  │
-                            │        │               │          │
-                            └────────┼───────────────┼──────────┘
-                                     │               │
-                                     ▼               ▼
-                            ┌─────────────────────────────┐
-                            │     Neon PostgreSQL          │
-                            │   (Serverless DB)            │
-                            └─────────────────────────────┘
-                                     ▲
-                                     │ sync jobs
-                            ┌────────┴─────────┐
-                            │  Codeforces API  │
-                            │  (rate limited)  │
-                            └──────────────────┘
-```
-
-### Architecture Decisions
-
-**Decoupled sync worker** — The sync worker runs as a completely separate Docker container from the API server. This means CF API calls never block HTTP requests. If CF is slow or down, your dashboard still loads from cached DB data instantly.
-
-**Postgres-backed job queue** — Instead of calling CF directly on user request, the app creates `SyncJob` records in PostgreSQL. Workers claim jobs atomically with `FOR UPDATE SKIP LOCKED` (safe for any number of worker processes), honor per-job `priority` and `runAfter`, retry failures with quadratic backoff (up to `maxAttempts`), and a heartbeat-based sweep requeues jobs whose worker crashed mid-run. A partial unique index guarantees at most one active job per (handle, jobType), so concurrent triggers can't double-queue.
-
-**Sync sessions** — A user-triggered sync groups its jobs (profile → ratings → submissions → activity → stats) under one `syncSessionId`. The frontend polls a single session endpoint and gets aggregate status, current stage, and a monotonic progress percentage.
-
-**Precomputed stats (`HandleStats`)** — After every submissions sync, a `stats` job aggregates everything the dashboard needs (verdicts, languages, difficulty distribution, tag mastery, attempts analysis, contest extremes) into a single JSON-backed row. Dashboard endpoints are single-row reads; nothing heavy runs on the request path.
-
-**One-request dashboard** — `GET /api/dashboard/overview` returns every dashboard section in one response. The frontend fetches it once and all components read their slice from a shared client-side store — one round trip instead of eleven.
-
-**Activity aggregation** — Raw submissions are stored first, then aggregated into daily `Activity` records as a separate job (rebuilt atomically in a transaction). The expensive grouping runs once in the background, not on every dashboard request.
-
----
-
-## The Codeforces API Rate Limit Problem
-
-This is the most critical engineering challenge in the project.
-
-### CF API Constraints
-
-Codeforces enforces a hard limit of **5 requests per second** per IP. Exceeding this results in:
-- `ECONNRESET` — TCP connection dropped mid-response
-- `HTTP 503` — temporary IP ban (minutes to hours)
-- `HTTP 429` — explicit rate limit response
-
-In practice, CF's Cloudflare layer is even more aggressive — it fingerprints requests and blocks Node.js HTTP clients that don't match browser TLS signatures. This is why the project uses **native `fetch`** (Node 22's undici-based implementation) instead of axios, which uses a recognizable TLS fingerprint that Cloudflare blocks.
-
-### How This Project Handles It
-
-**Rate limiter (`worker/rateLimiter.js`):**
-```
-400ms minimum delay between requests = max 2.5 req/sec
-```
-This is deliberately conservative — CF's stated limit is 5/sec but they start resetting connections at 3-4/sec on many IPs. Callers are serialized on a promise chain, so even concurrent requests inside the process can't burst past the limit.
-
-**Incremental submission sync:**
-CF returns submissions newest-first, so the worker fetches pages from the top and stops as soon as an entire page is already in the database (nothing new, no verdict changed). A re-sync for an active user is usually **one API call** instead of a full history crawl. `submissions_full` jobs (`node trigger-sync.js --full`) still crawl everything to pick up old rejudges.
-
-**Exponential backoff in `codeforces.service.js`:**
-```
-Attempt 1 fails → wait 2s → retry
-Attempt 2 fails → wait 4s → retry
-Attempt 3 fails → wait 8s → retry
-Attempt 4 fails → wait 15s → retry
-Attempt 5 fails → mark job as failed
-```
-
-**Small batch sizes for submissions:**
-The `user.status` endpoint (submissions) returns large JSON payloads. Requesting 1000 submissions at once (~2MB) causes CF to reset the connection. Batching at 200 per request keeps responses under ~400KB which transfers reliably.
-
-**Post-failure cooldown + retry backoff:**
-After any job failure, the worker waits 10 seconds before picking up the next job, and the failed job itself is requeued with quadratic backoff (1min → 4min → capped at 10min) until `maxAttempts` is exhausted. This prevents rapid retry loops that would compound the rate limit problem.
-
-**Idempotent batched writes:**
-Submissions and rating changes are written with `createMany(..., skipDuplicates)` — two round trips per 200-submission page instead of 400 — and re-running an interrupted sync never creates duplicate data. Verdicts recorded while a submission was still judging are updated on the next sync.
-
----
-
-## Capacity Analysis
-
-### Current Setup (Single EC2 t2.micro + Neon Free Tier)
-
-| Resource | Limit | Notes |
-|----------|-------|-------|
-| Neon free DB | 0.5 GB storage | ~50K submissions before hitting limit |
-| Neon connections | 20 concurrent | Prisma connection pooling handles this |
-| EC2 t2.micro RAM | 1 GB | Sufficient for Express + worker |
-| CF API | 2 req/sec (our limit) | Shared across all sync jobs |
-
-**Realistic user capacity at this tier: ~1000 users**
-
-With 100 users each having ~500 submissions = 50,000 submission rows. Each row is ~200 bytes = ~10MB. Well within Neon's 0.5GB limit.
-
-The bottleneck is the **CF API rate limit**, not the database or server:
-
-- 1 full sync (profile + ratings + submissions) takes ~30–60 seconds per user
-- At 2 req/sec, syncing 10 users simultaneously = 10 jobs competing for the same rate limit
-- The job queue serializes this naturally — jobs process one at a time
-
-### Scaling to 10000+ Users
-
-To handle more users, three changes are needed:
-
-**1. Multiple CF API keys / IPs**
-CF rate limits per IP. Running multiple worker instances on different IPs multiplies throughput proportionally. Each additional EC2 worker = +2 req/sec capacity.
-
-**2. Upgrade database**
-Move from Neon free tier to Neon Pro or a dedicated PostgreSQL instance. Add indexes on `handleId`, `creationTime`, `verdict` (already in schema).
-
-**3. Smart re-sync scheduling**
-Instead of re-syncing all users on demand, only sync users who have submitted recently (check `lastOnlineTime` from CF profile). Most users are inactive — no need to sync them daily.
-
-**Estimated capacity by tier:**
-
-| Setup | Users | Cost/month |
-|-------|-------|-----------|
-| 1× t2.micro + Neon free | ~100 | $0–10 |
-| 1× t3.small + Neon Pro | ~500 | $30–50 |
-| 3× t3.small workers + RDS | ~5000 | $150–200 |
 
 ---
 
@@ -248,111 +350,68 @@ Instead of re-syncing all users on demand, only sync users who have submitted re
 
 ### Prerequisites
 - Node.js 22+
-- Docker Desktop
-- PostgreSQL database (or [Neon](https://neon.tech) free tier)
+- A PostgreSQL database (local, or a free [Neon](https://neon.tech) project)
+- Docker + Docker Compose (optional, for containerized run)
 
-### Backend Setup
+### 1. Backend (API + worker)
 
 ```bash
 cd backend
-
-# Install dependencies
 npm install
 
-# Set up environment variables
-cp .env.example .env
-# Fill in: DATABASE_URL, JWT_SECRET, JWT_EXPIRES_IN, FRONTEND_URL
+# Configure env (see below)
+cp .env.example .env    # then edit values
 
-# Run database migrations
-npx prisma migrate deploy
+# Apply the schema
+npx prisma migrate deploy   # or: npx prisma migrate dev
 
-# Start development server
-node server.js
-
-# Start sync worker (separate terminal)
-node worker/syncWorker.js
+# Run the API and the worker in two terminals
+node server.js              # API on :8080
+node worker/syncWorker.js   # background sync worker
 ```
 
-### Frontend Setup
+### 2. Frontend
 
 ```bash
 cd frontend
-
-# Install dependencies
-pnpm install
-
-# Create .env with:
-echo "NEXT_PUBLIC_URL=/api" > .env
-
-# Start development server
-pnpm dev
+npm install          # (or pnpm install)
+npm run dev          # Next.js on :3000
 ```
 
-### Docker (Recommended)
+Open <http://localhost:3000>.
+
+### 3. Or run the backend with Docker Compose
 
 ```bash
 cd backend
-
-# Build and run both API + worker
-docker-compose up --build
-
-# Run in background
-docker-compose up -d --build
+# Provide DATABASE_URL, JWT_SECRET, etc. in the environment or an .env file
+docker compose up --build
 ```
+
+This starts the API (`cf_api`, port 8080) and the worker (`cf_worker`). The API
+runs `prisma migrate deploy` on startup.
 
 ---
 
 ## Environment Variables
 
-### Backend `.env`
-```env
-DATABASE_URL=postgresql://user:pass@host/db?sslmode=require
-JWT_SECRET=your_secret_key_here
-JWT_EXPIRES_IN=7d
-FRONTEND_URL=http://localhost:3000
-NODE_ENV=development
-```
+### `backend/.env`
+| Variable | Description | Example |
+| :--- | :--- | :--- |
+| `DATABASE_URL` | Postgres connection string | `postgresql://user:pass@host:5432/db` |
+| `JWT_SECRET` | Secret for signing JWTs | `change_this_to_a_long_random_string` |
+| `JWT_EXPIRES_IN` | Token lifetime | `7d` |
+| `FRONTEND_URL` | Allowed CORS origin(s), comma-separated | `http://localhost:3000` |
+| `NODE_ENV` | `development` / `production` | `development` |
 
-### Frontend `.env`
-```env
-NEXT_PUBLIC_URL=/api
-```
+### `frontend/.env`
+| Variable | Description | Example |
+| :--- | :--- | :--- |
+| `NEXT_PUBLIC_API_BASE_URL` | Backend origin the proxy forwards to | `http://localhost:8080` |
+| `NEXT_PUBLIC_URL` | Base path used by the client | `/api` |
 
----
-
-## API Endpoints
-
-### Auth
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/auth/register` | Create account |
-| POST | `/api/auth/login` | Login |
-| POST | `/api/auth/logout` | Logout |
-| GET | `/api/auth/me` | Get current user |
-
-### Sync
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/codeforces/link-handle` | Verify and link a CF handle |
-| POST | `/api/codeforces/sync` | Start a sync session (409 returns the running session) |
-| GET | `/api/codeforces/sync/session/:sessionId` | Aggregate session progress (stage, %, records) |
-| GET | `/api/codeforces/sync/:jobId` | Single-job status (legacy) |
-
-### Dashboard
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/dashboard/overview` | **Everything below in one request** |
-| GET | `/api/dashboard/summary` | Rating, rank, problems solved |
-| GET | `/api/dashboard/activity` | Heatmap data (supports `?days=`) |
-| GET | `/api/dashboard/contests` | Recent contest history (supports `?limit=`) |
-| GET | `/api/dashboard/rating-history` | Full rating progression |
-| GET | `/api/dashboard/verdict-stats` | Submission verdict breakdown |
-| GET | `/api/dashboard/language-stats` | Language usage |
-| GET | `/api/dashboard/difficulty-stats` | Problems by rating bucket |
-| GET | `/api/dashboard/attempts-stats` | Acceptance rate + attempt stats |
-| GET | `/api/dashboard/tag-mastery` | Per-tag performance |
-| GET | `/api/dashboard/contest-extremes` | Best/worst contest stats |
-| GET | `/api/dashboard/focus-areas` | Top 6 tags by solve % |
+> `.env` files are git-ignored. Never commit real secrets; rotate any secret
+> that has been shared.
 
 ---
 
@@ -368,37 +427,149 @@ ssh -i your-key.pem ubuntu@your-ec2-ip
 sudo apt update && sudo apt install docker.io docker-compose -y
 sudo usermod -aG docker ubuntu
 
-# Clone repo
+# Clone and configure
 git clone https://github.com/Swastik2740S/CODEFORCES_API.git
 cd CODEFORCES_API/backend
+nano .env                       # add DATABASE_URL, JWT_SECRET, etc.
 
-# Create .env
-nano .env  # add all env vars
-
-# Start
-docker-compose up -d --build
+# Start API + worker
+docker compose up -d --build
 ```
 
-Ensure port `8080` is open in your EC2 Security Group inbound rules (Custom TCP, 0.0.0.0/0).
+Open port `8080` in the EC2 Security Group inbound rules. The API container runs
+`prisma migrate deploy && node server.js`; the worker runs
+`node worker/syncWorker.js`. Both `restart: unless-stopped`.
 
 ### Frontend on Vercel
 
-1. Push to GitHub
-2. Import project in [Vercel](https://vercel.com)
-3. Set environment variable: `NEXT_PUBLIC_URL=/api`
-4. Update `next.config.mjs` destination with your EC2 IP
+1. Push to GitHub and import the project in [Vercel](https://vercel.com).
+2. Set `NEXT_PUBLIC_API_BASE_URL` to your backend origin (e.g. `http://<ec2-ip>:8080`).
+3. The `next.config.mjs` rewrite proxies `/api/*` to that origin — same-origin
+   requests, no CORS headaches.
+
+### Database
+
+Neon serverless Postgres in production. The worker tolerates Neon's cold-start
+pauses — a failed claim during wake-up is retried after a short sleep, and idle
+polling backs off to 15s.
+
+---
+
+## Scaling & Capacity
+
+There are **two very different ceilings**, and it's important not to conflate
+them: the **read/browse path** and the **data-ingestion path**. The read path
+scales like any stateless web app; the ingestion path is capped by an external
+dependency we don't control — **Codeforces**.
+
+### A. With the current compute (single EC2 + one worker + Neon)
+
+| Dimension | Realistic ceiling | What sets the limit |
+| :--- | :--- | :--- |
+| **Concurrent dashboard viewers** | **~1,000–3,000** | One Node/Express instance + connection pool. Reads are pre-computed single-row lookups, so this is comfortable. |
+| **Registered users kept fresh** | **~a few thousand → ~10,000** | The single worker + one Codeforces IP at **~2.5 req/s**. This is the true bottleneck. |
+| **Storage** | ~2,500 users on Neon free (0.5 GB) | ~20 MB per 100 users |
+
+**Why the read side is easy:** each dashboard load reads a pre-computed
+`HandleStats` row plus a couple of indexed queries — sub-10 ms. The API is
+stateless (JWT in a cookie), so nothing pins a user to a box.
+
+**Why the sync side is the wall:** every CF call funnels through one serialized
+`~2.5 req/s` limiter in one worker process. That's a hard ceiling of
+`~9,000 calls/hr` in theory, `~5,000–6,000/hr` in practice after retries and
+inter-page delays. An incremental re-sync costs ~3–4 calls; a first-time sync of
+a 10k-submission user costs ~50 calls and monopolizes the worker for a minute+.
+Because syncs are **demand-driven (a manual button, no background cron)** and
+bursty, the binding constraint is queue latency during peaks — not daily totals.
+
+### B. With company-level resources
+
+Removing the compute limit moves the bottleneck **out of our stack and onto
+Codeforces.** The architecture is already built to scale — stateless reads,
+pre-computed stats, an idempotent multi-worker queue — so most of this is
+deployment, not rewrites.
+
+| Dimension | Ceiling with resources | How |
+| :--- | :--- | :--- |
+| **Concurrent viewers** | **Millions** | Stateless API replicas behind a load balancer + Postgres read replicas + CDN/Redis cache. No code changes needed. |
+| **Users kept fresh** | **~1–4 million** | A pool of worker instances, **each on its own egress IP**, multiplying CF throughput. |
+| **Storage** | Effectively unlimited | Managed Postgres (Aurora/self-hosted) with replicas; partition `Submission` by `handleId`. 10M users ≈ ~2 TB. |
+
+**The math on ingestion.** Total throughput = *(number of distinct egress IPs)*
+× *(~2–4 req/s per IP)*. A proxy/NAT fleet that Codeforces still tolerates (on
+the order of **~50–200 req/s** before you look like an attack) yields:
+
+| Sustained ingestion | CF calls/day | Users refreshed daily (~4 calls each) |
+| :--- | :--- | :--- |
+| 2.5 req/s (today, 1 IP) | ~200k | ~50k |
+| ~50 req/s (~20-IP pool) | ~4.3M | **~1M** |
+| ~100–200 req/s (large fleet) | ~8–17M | **~2–4M** |
+
+**Two things the code already gets right for this:**
+- The queue uses `FOR UPDATE SKIP LOCKED`, so you can add workers with **zero**
+  double-processing.
+- The rate limiter is **per-process** — which is exactly correct for a
+  *one-worker-per-IP* model, where each worker self-limits against its own IP's
+  budget with no distributed coordination.
+- ⚠️ The one trap: **never run two workers behind the same IP** — each keeps its
+  own limiter, so together they'd exceed Codeforces' per-IP limit and get the IP
+  banned. Scaling requires *distinct IPs*, not just more containers.
+
+### The real ceiling: Codeforces
+
+> **Our code is not the limit — Codeforces is.**
+
+No matter how much compute we buy, every byte of data comes from one
+third-party site with a per-IP rate limit, run by a small team and not designed
+to be a bulk data backend for someone else's product. Money buys more IPs, but
+past roughly **1–4 million actively-refreshed users** you'd generate enough load
+to look like a DDoS and get your IP ranges/ASN blocked. Beyond that point the
+limiter is a **business relationship** (a data partnership or bulk export with
+Codeforces), not a line of code we can write.
 
 ---
 
 ## Known Limitations
 
-- **CF API blocks on some ISPs** — `user.status` endpoint may require a VPN for initial sync on Indian ISPs due to Cloudflare TLS fingerprinting
-- **Neon cold starts** — Free tier DB pauses after 5 min inactivity; first request after pause takes ~3s (handled gracefully by the worker, which also backs off its polling to 15s when idle)
-- **No real-time sync** — Data refreshes only when a sync job is manually triggered or the user requests it
-- **Single worker container** — One sync job runs at a time; multiple users syncing simultaneously queue up. Job claiming uses `FOR UPDATE SKIP LOCKED`, so adding worker containers (on separate IPs for CF rate-limit headroom) scales horizontally with no code changes
+- **CF blocks on some ISPs** — the `user.status` endpoint may require a VPN for
+  the initial sync on certain ISPs due to Cloudflare TLS fingerprinting.
+- **Neon cold starts** — the free tier pauses after ~5 min idle; the first
+  request after a pause takes a few seconds (handled gracefully — the worker
+  retries and backs off its polling to 15s when idle).
+- **No real-time sync** — data refreshes only when a sync is triggered (manual
+  button or peer compare); there is no background scheduler yet.
+- **Single worker container** — one sync job runs at a time, so simultaneous
+  syncs queue. Job claiming uses `FOR UPDATE SKIP LOCKED`, so adding workers
+  (each on a separate IP) scales this out with no code changes.
+
+---
+
+## Roadmap
+
+- **Multi-IP worker fleet** — distribute workers across distinct egress IPs to
+  multiply Codeforces throughput (the single biggest scaling lever).
+- **Scheduled background refresh** — keep active users fresh without a manual
+  sync (note: this converts bursty load into a continuous floor and pushes
+  harder against the Codeforces ceiling).
+- **Redis-coordinated rate limiter** — for running multiple workers per IP safely.
+- **Predictive analytics** — recommend problems from a user's weak tags.
+- **Team dashboards** — group comparisons beyond one-to-one peers.
+
+---
+
+## Authors
+
+- **Swastik Verma** — Team Lead
+- **Ujjwal Sharma**
+- **Shruti Karwal**
+
+Built as a CO-OP industry project at **Chitkara University Institute of
+Engineering and Technology**, under the supervision of **Ms. Gifty Gupta**.
 
 ---
 
 ## License
 
-MIT
+Released under the **MIT License** — see [`LICENSE`](./LICENSE).
+
+Copyright (c) 2026 Swastik Verma.
