@@ -38,24 +38,21 @@ exports.updateProfile = async (req, res) => {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
-    const { email } = req.body;
+    const rawEmail = req.body.email;
+    const email = typeof rawEmail === "string" && rawEmail.trim() ? rawEmail.trim() : null;
 
-    if (!email) {
-      return res.status(400).json({ error: "Email is required" });
-    }
+    if (email) {
+      // Validate email format
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        return res.status(400).json({ error: "Invalid email format" });
+      }
 
-    // Validate email format
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      return res.status(400).json({ error: "Invalid email format" });
-    }
-
-    // Check email not already taken by another user
-    const existing = await prisma.user.findFirst({
-      where: { email, NOT: { id: userId } },
-    });
-    if (existing) {
-      return res.status(400).json({ error: "Email already in use" });
+      // Check email not already taken by another user
+      const existing = await prisma.user.findUnique({ where: { email } });
+      if (existing && existing.id !== userId) {
+        return res.status(409).json({ error: "Email already in use" });
+      }
     }
 
     const updated = await prisma.user.update({
@@ -66,6 +63,10 @@ exports.updateProfile = async (req, res) => {
 
     res.json({ user: updated });
   } catch (err) {
+    // Handle Prisma unique constraint violation (race condition)
+    if (err.code === "P2002") {
+      return res.status(409).json({ error: "Email already in use" });
+    }
     console.error(err);
     res.status(500).json({ error: "Failed to update profile" });
   }

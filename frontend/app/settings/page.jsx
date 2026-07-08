@@ -12,12 +12,18 @@ const API = "/api";
 
 // ── Shared fetch helper ───────────────────────────────────────────────────────
 async function apiFetch(path, options = {}) {
+  const { headers: extraHeaders, ...rest } = options;
   const res = await fetch(`${API}${path}`, {
     credentials: "include",
-    headers: { "Content-Type": "application/json", ...options.headers },
-    ...options,
+    ...rest,
+    headers: { "Content-Type": "application/json", ...extraHeaders },
   });
-  const data = await res.json();
+  let data;
+  try {
+    data = await res.json();
+  } catch {
+    throw new Error(res.ok ? "Invalid server response" : `Request failed (${res.status})`);
+  }
   if (!res.ok) throw new Error(data.error || "Request failed");
   return data;
 }
@@ -121,18 +127,22 @@ export default function SettingsPage() {
   };
 
   useEffect(() => {
-    Promise.all([
+    Promise.allSettled([
       apiFetch("/auth/me"),
       apiFetch("/codeforces/handles"),
     ])
-      .then(([user, handlesData]) => {
-        setEmail(user.email ?? "");
-        setHandles([
-          ...(handlesData.active ? [handlesData.active] : []),
-          ...(handlesData.others ?? []),
-        ]);
+      .then(([userResult, handlesResult]) => {
+        if (userResult.status === "fulfilled") {
+          setEmail(userResult.value.email ?? "");
+        } else {
+          showToast("Failed to load profile", true);
+        }
+        if (handlesResult.status === "fulfilled") {
+          const d = handlesResult.value;
+          setHandles([...(d.active ? [d.active] : []), ...(d.others ?? [])]);
+        }
+        // Silently ignore handles failure — user can still edit profile
       })
-      .catch(() => showToast("Failed to load user data", true))
       .finally(() => setLoading(prev => ({ ...prev, page: false })));
   }, []);
 
